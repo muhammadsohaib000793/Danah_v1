@@ -18,17 +18,24 @@ Two things are **not** finished, and both are stated plainly rather than papered
    `scripts/smoke_test.py` (`make smoke`) proves them for real once keys are added. See
    [`FIRST_RUN.md`](FIRST_RUN.md).
 
-2. **The Docker engine died during the final gate run and could not be brought back from this
-   session.** It began returning `500 Internal Server Error` on every call, taking the Postgres and
-   Redis containers with it. Docker Desktop was relaunched (with the user's authorisation), but its
-   backend service `com.docker.service` is set to **Manual** start and starting it needs
-   **Administrator rights**, which this session does not have — Docker Desktop normally raises a UAC
-   prompt for this.
+2. **The machine ran out of disk, which killed the Docker engine mid-gate.** `C:` reached
+   **100% full (0 bytes free)**. That is the single root cause of everything that failed late in
+   this build: the daemon started returning `500 Internal Server Error` on every call, the Postgres
+   and Redis containers died with it, `docker compose build` aborted with an EOF, the test run hung
+   (it could not write), and even `git commit` failed with *"No space left on device"*.
+
+   Freeing the caches this build owned (`.mypy_cache`, `__pycache__`, temp) recovered ~3.5 GB —
+   enough to commit the work safely, but Docker Desktop's backend service (`com.docker.service`,
+   start type **Manual**) still will not start, and starting it needs **Administrator rights** that
+   this session does not have.
+
+   **`C:\Users\DEV\AppData\Local\Docker\wsl` is 102.7 GB.** It was left untouched: it holds every
+   image and volume on the machine, including an unrelated `crm_postgres` container's data.
 
    The integration suite runs against a **real** PostgreSQL + pgvector and a **real** Redis by
-   design (`docs/DECISIONS.md` #14 — SQLite has no vectors, no FTS, no `jsonb`, and no append-only
+   design (`docs/DECISIONS.md` #14 — SQLite has no vectors, no FTS, no `jsonb` and no append-only
    trigger, so it would test a different schema than the one that ships). It therefore could not be
-   completed. **§5(a) below is the one command that finishes it.**
+   completed. **§5(a) below finishes it.**
 
 ---
 
@@ -119,11 +126,24 @@ All 25 implemented, with response models, in OpenAPI.
 
 ## 5. Finish the job — exact next steps
 
-### (a) Complete the integration suite (needs Docker; ~3 minutes)
+### (a) Complete the integration suite (~5 minutes)
 
-Docker Desktop is running but its backend service is stopped and needs elevation. **Click through
-the Docker Desktop UAC prompt** (or start the service from an elevated shell:
-`Start-Service com.docker.service`). Wait for `docker version` to report a Server version, then:
+**First, free disk space — this is what broke the build.** `C:` is essentially full and Docker
+cannot run without headroom. Once Docker is back, the biggest safe win is:
+
+```bash
+docker system prune -a --volumes    # ⚠️ removes UNUSED images/volumes across ALL projects
+docker builder prune -a             # build cache only — safer if you are unsure
+```
+
+**Then start Docker.** Its backend service is stopped and needs elevation — accept the Docker
+Desktop UAC prompt, or from an **Administrator** PowerShell:
+
+```powershell
+Start-Service com.docker.service
+```
+
+Wait until `docker version` reports a **Server** version, then:
 
 ```bash
 docker compose up -d postgres redis

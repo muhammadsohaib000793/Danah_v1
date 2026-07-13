@@ -110,31 +110,38 @@ by the user via `scripts/smoke_test.py` (`make smoke`) after adding keys — see
 
 ---
 
-## ⚠️ Blocker at the final gate — needs one click
+## 🛑 Blocker at the final gate — the machine ran out of disk
 
-The **Docker engine died** during the last full-suite run (it began returning
-`500 Internal Server Error` on every call) and took the Postgres and Redis containers with it.
+**`C:` hit 100% full (0 bytes free).** That single fact caused every late failure in this build:
+the Docker engine started returning `500 Internal Server Error` on every call, the Postgres and
+Redis containers died with it, `docker compose build` aborted with an EOF, the test run hung, and
+`git commit` failed with *"No space left on device"*.
 
-Docker Desktop was relaunched with the user's authorisation, but its backend service
-`com.docker.service` is set to **Manual** start and starting it requires **Administrator rights**,
-which this session does not have. Docker Desktop normally raises a UAC prompt for it.
+Freeing this build's own caches (`.mypy_cache`, `__pycache__`, temp) recovered ~3.5 GB — enough to
+commit all work safely. But Docker Desktop's backend service (`com.docker.service`, start type
+**Manual**) still will not start, and starting it needs **Administrator rights** this session does
+not have.
+
+`C:\Users\DEV\AppData\Local\Docker\wsl` is **102.7 GB**. It was left untouched — it holds every
+image and volume on the machine, including an unrelated `crm_postgres` container's data.
 
 The integration suite runs against a real PostgreSQL + pgvector and a real Redis **by design**
 (`docs/DECISIONS.md` #14): SQLite has no vectors, no FTS, no `jsonb` and no append-only trigger, so
-it would test a different schema than the one that ships. It therefore cannot run without Docker.
+it would test a *different schema* than the one that ships. It therefore cannot run without Docker.
 
-**To finish (≈3 minutes):** accept the Docker Desktop UAC prompt (or, from an elevated shell,
-`Start-Service com.docker.service`), then:
+**To finish (≈5 minutes)** — free disk, start Docker as Administrator, then:
 
 ```bash
+docker system prune -a          # reclaim space (removes unused images across ALL projects)
 docker compose up -d postgres redis
-.venv/Scripts/pytest -q          # 168 tests
+.venv/Scripts/pytest -q         # 168 tests
 ```
 
 That completes the four criteria marked `PENDING-DOCKER` in `BUILD_REPORT.md`: audit tamper
 detection, the ≥100-entry chain verify, rate-limit 429s, and the classification sweep.
-`BUILD_REPORT.md` §5(a) also has the three `git tag` commands — the phase-2/3/4 tags are
-**deliberately not applied yet**, because their gates have not been observed to pass.
+`BUILD_REPORT.md` §5(a) also carries the three `git tag` commands — the phase-2/3/4 tags are
+**deliberately not applied**, because their gates have not been observed to pass. Claiming a tag on
+an unrun gate is exactly the kind of quiet dishonesty this journal exists to prevent.
 
 **Green without Docker:** `ruff` ✅ · `ruff format` ✅ · `mypy --strict` (101 files) ✅ ·
 unit suite (86 tests) ✅ · `/metrics` counters verified live ✅
