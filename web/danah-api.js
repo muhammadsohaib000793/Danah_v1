@@ -586,7 +586,100 @@
 
   /* =====================================================================
      4. APPROVALS — the human gate, for real
-     ===================================================================== */
+     =====================================================================
+     The prototype's decision card renders sections this pipeline does not produce:
+     "Financial impact", "Red-Team dissent", and "Possible outcomes — 3–5 modelled
+     scenarios" whose probabilities (20/45/20/10) are hard-coded in makeOutcomes().
+     Feeding it a real approval crashed it outright — d.evidence was undefined and
+     it called .map() on it.
+
+     The fix is not to invent the missing fields. This is the screen where a human
+     commits their name to publishing intelligence; a fabricated 45%-likely scenario
+     or an invented financial figure sitting next to a real risk is precisely the
+     harm the whole system is built to prevent. So the card shows what the analysis
+     genuinely produced, and states plainly what it did not.                        */
+  window.openDecision = function openDecision(id) {
+    const d = (DECISIONS || []).find((x) => x.id === id);
+    if (!d) return;
+    const i = d.insight || {};
+
+    const sev = i.severity ?? d.severity ?? 0;
+    const conf = Math.round(((i.confidence ?? d.confidence) || 0) * 100);
+    const like = i.likelihood == null ? null : Math.round(i.likelihood * 100);
+
+    const recs = (i.recommendations || []);
+    const cites = (i.citations || {});
+    const citeIds = [...(cites.items || []), ...(cites.chunks || [])];
+
+    const row = (k, v) =>
+      `<div style="display:flex;gap:12px;padding:7px 0;border-bottom:1px solid #1e2942">
+         <span style="flex:0 0 150px;color:#7f8db0;font-size:12px">${esc(k)}</span>
+         <span style="color:#dce6fb;font-size:13px">${v}</span></div>`;
+
+    const recsHtml = recs.length
+      ? recs.map((r, n) => `
+          <div style="padding:10px 12px;margin-bottom:7px;border-radius:8px;background:#0e1526;
+               border:1px solid #222e4a">
+            <div style="color:#dce6fb;font-size:13px;font-weight:600">
+              ${String.fromCharCode(97 + n)}. ${esc(r.action || r)}</div>
+            ${r.rationale ? `<div style="color:#8494b5;font-size:12px;margin-top:4px">${esc(r.rationale)}</div>` : ''}
+            ${r.owner ? `<div style="color:#6f7d9c;font-size:11.5px;margin-top:4px">Owner: ${esc(r.owner)}${r.horizon ? ` · ${esc(r.horizon)}` : ''}</div>` : ''}
+          </div>`).join('')
+      : `<div style="color:#7f8db0;font-size:12.5px">The agent proposed no actions for this insight.</div>`;
+
+    openModal(`<div class="modal wide" onclick="event.stopPropagation()" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div class="mh-ic bg-orange tone-orange">${typeof ic === 'function' ? ic('spark', 21) : ''}</div>
+        <div>
+          <h3>${esc(d.title)}</h3>
+          <p>${esc(d.subjectType || 'insight')} · drafted by the ${esc(i.created_by_agent || 'agent')} agent · awaiting your decision</p>
+        </div>
+        <button class="modal-x" onclick="closeModal()" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div style="padding:9px 12px;border-radius:8px;background:#3a2a08;border:1px solid #8a6a12;
+             color:#ffc46b;font-size:12.5px;margin-bottom:16px">
+          <b>NOT PUBLISHED.</b> Nothing here is visible to anyone else until you approve it.
+          DANAH recommends; you decide, and your decision is written to the audit chain.
+        </div>
+
+        ${row('Severity', `${sev} / 5`)}
+        ${row('Confidence', `${conf}%`)}
+        ${row('Likelihood', like == null ? '<i style="color:#7f8db0">not estimable from the evidence</i>' : `${like}%`)}
+        ${row('Domains', (i.domains || []).map(esc).join(', ') || '<i style="color:#7f8db0">none</i>')}
+        ${row('Classification', esc(i.classification || 'OFFICIAL'))}
+
+        <h4 style="margin:18px 0 8px;color:#dce6fb;font-size:13px">The analysis</h4>
+        <div style="color:#e6edfb;font-size:14px;line-height:1.7;white-space:pre-wrap">${esc(i.body || d.summary || '')}</div>
+
+        <h4 style="margin:18px 0 8px;color:#dce6fb;font-size:13px">Recommended actions</h4>
+        ${recsHtml}
+
+        <h4 style="margin:18px 0 8px;color:#dce6fb;font-size:13px">Evidence</h4>
+        <div style="color:#8494b5;font-size:12.5px">
+          ${citeIds.length
+            ? `Grounded in ${citeIds.length} cited source${citeIds.length === 1 ? '' : 's'} from the corpus.`
+            : '<b style="color:#ff8095">No citations.</b> An insight with no citations should not be published.'}
+        </div>
+
+        <div style="margin-top:18px;padding:11px 12px;border-radius:8px;background:#0e1526;
+             border:1px dashed #2a3550;color:#7f8db0;font-size:11.5px;line-height:1.6">
+          <b style="color:#9fb0d0">What this analysis does not include.</b>
+          No financial modelling, no red-team dissent and no probability-weighted scenarios — this
+          pipeline does not produce them, and the fields the prototype reserved for them are left
+          empty rather than filled with plausible-looking numbers. Weigh this on the evidence above.
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        <button class="btn btn-ghost" onclick="deferDecision('${esc(id)}')">Request changes</button>
+        <button class="btn btn-primary" onclick="approveDecision('${esc(id)}')">Approve &amp; publish</button>
+      </div>
+    </div>`);
+  };
+
   window.approveDecision = async function approveDecision(id) {
     if (!state.live) { if (typeof toast === 'function') toast('Backend offline'); return; }
     await decide(id, 'approved', 'Approved via DANAH command centre');
@@ -669,19 +762,37 @@
       }
 
       const appr = Array.isArray(approvals) ? approvals : (approvals?.items || []);
+
+      // Attach the full insight behind each approval. The decision card needs the body,
+      // the recommendations and the citations — an approval row alone carries only a title
+      // and a score, and a human cannot responsibly approve what they cannot read.
+      const byId = new Map(rows.map((i) => [i.id, i]));
+      const missing = appr
+        .filter((a) => a.subject_type === 'insight' && !byId.has(a.subject_id))
+        .slice(0, 20);
+      const fetched = await Promise.all(
+        missing.map((a) => call(`/insights/${a.subject_id}`).catch(() => null))
+      );
+      fetched.filter(Boolean).forEach((i) => byId.set(i.id, i));
+
       DECISIONS.length = 0;
-      appr.forEach((a) => DECISIONS.push({
-        id: a.id,
-        title: a.subject_title || `${a.subject_type} awaiting decision`,
-        summary: a.subject_summary || '',
-        ministry: 'all',
-        urgency: (a.subject_severity || 0) >= 4 ? 'critical' : 'high',
-        confidence: a.subject_confidence || 0,
-        score: Math.round((a.subject_confidence || 0) * 100),
-        owner: a.assigned_role,
-        timeToImpact: '—',
-        subjectType: a.subject_type,
-      }));
+      appr.forEach((a) => {
+        const insight = byId.get(a.subject_id) || null;
+        DECISIONS.push({
+          id: a.id,
+          title: a.subject_title || insight?.title || `${a.subject_type} awaiting decision`,
+          summary: a.subject_summary || insight?.body || '',
+          ministry: (insight?.domains && insight.domains[0]) || 'all',
+          urgency: (a.subject_severity || insight?.severity || 0) >= 4 ? 'critical' : 'high',
+          confidence: a.subject_confidence ?? insight?.confidence ?? 0,
+          severity: a.subject_severity ?? insight?.severity ?? 0,
+          score: Math.round(((a.subject_confidence ?? insight?.confidence) || 0) * 100),
+          owner: a.assigned_role,
+          timeToImpact: '—',
+          subjectType: a.subject_type,
+          insight,
+        });
+      });
 
       if (dash?.counts) {
         window.DANAH_DASH = dash;
