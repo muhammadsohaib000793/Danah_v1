@@ -301,6 +301,27 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
+    @field_validator("database_url")
+    @classmethod
+    def _normalise_db_scheme(cls, v: str) -> str:
+        """Accept the bare scheme every managed provider hands out, and drive it with asyncpg.
+
+        Railway, Render, Neon, Fly and Supabase all inject `postgresql://` (Heroku still emits
+        the legacy `postgres://`). This app's engine is async and needs the `+asyncpg` driver, so
+        a raw provider URL would fail at connect time with a driver error that looks nothing like
+        its cause. Normalising here means the deployment can paste the provider's URL verbatim —
+        or reference it directly — and it just works. A URL that already names a driver is left
+        untouched.
+        """
+        for prefix in ("postgresql+", "postgres+"):
+            if v.startswith(prefix):
+                return v
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://") :]
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v[len("postgres://") :]
+        return v
+
     @field_validator("log_level")
     @classmethod
     def _validate_log_level(cls, v: str) -> str:
