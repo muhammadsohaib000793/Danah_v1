@@ -1,0 +1,19 @@
+#!/bin/sh
+# Strip any co-author / generated-by attribution from every commit message.
+#
+# Runs on every commit, whatever wrote the message — CLI, IDE, or an AI tool. Config alone
+# fixes the *author*; it does not touch trailers inside the message body, and a trailer is
+# what puts a second name on the commit in GitHub's UI. This closes that gap so it cannot
+# come back by accident.
+#
+# Enabled by:  git config core.hooksPath .githooks
+
+msg="$1"
+tmp="$msg.tmp"
+
+# Drop the trailer lines, then squeeze the trailing blank lines they leave behind.
+grep -viE '^[[:space:]]*(Co-Authored-By|Co-authored-by|Signed-off-by:[[:space:]]*Claude|Generated[- ]with)' "$msg" \
+  | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > "$tmp"
+
+mv "$tmp" "$msg"
+exit 0
