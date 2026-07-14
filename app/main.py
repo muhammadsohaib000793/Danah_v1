@@ -127,7 +127,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if cfg.metrics_enabled:
         _install_metrics(app)
 
+    _mount_ui(app)
+
     return app
+
+
+def _mount_ui(app: FastAPI) -> None:
+    """Serve the command centre from the API itself, at `/`.
+
+    Same origin as the API on purpose. The alternative — a separate static host — buys
+    nothing here and costs a CORS surface: the browser would need cross-origin credentialed
+    requests, which means relaxing `CORS_ORIGINS` on a system holding OFFICIAL-SENSITIVE
+    data. Served from `/`, the UI calls `/api/...` as a same-origin request and no
+    cross-origin exception is needed at all.
+
+    Mounted last, so it can never shadow an API route.
+    """
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    web = Path(__file__).resolve().parent.parent / "web"
+    if not (web / "index.html").exists():
+        log.info("ui_not_mounted", reason="web/index.html is absent", path=str(web))
+        return
+
+    app.mount("/", StaticFiles(directory=str(web), html=True), name="ui")
+    log.info("ui_mounted", path=str(web), url="/")
 
 
 def _register_optional_routers(app: FastAPI) -> None:

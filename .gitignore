@@ -83,3 +83,6 @@ desktop.ini
 # ---------------------------------------------------------------------------
 .scratch/
 *.tmp
+
+# UI verification screenshots (build artefacts)
+web/_shots/

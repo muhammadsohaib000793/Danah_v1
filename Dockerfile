@@ -31,6 +31,7 @@ COPY alembic ./alembic
 COPY app ./app
 COPY scripts ./scripts
 COPY tests ./tests
+COPY web ./web
 
 # Document storage volume mount point.
 RUN mkdir -p /srv/danah/data/documents
