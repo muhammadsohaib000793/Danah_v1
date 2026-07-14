@@ -17,6 +17,7 @@ real API and served by it at `/`. What was a simulation is now real:
 | Approvals | splicing a local array | a real human gate; approval **publishes** and is written to the audit chain |
 | Data | synthetic, lost on refresh | PostgreSQL — World Bank, GDELT, RSS, ReliefWeb |
 
+
 ---
 
 ## Quick start — the whole product in one command
