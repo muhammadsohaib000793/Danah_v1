@@ -392,6 +392,100 @@
   }
 
   /* =====================================================================
+     2b. THE LIVE AGENT PANEL — the *other* chat, and the one users reach for
+     =====================================================================
+     v11 has two chats that look identical to a user and share nothing in code:
+     the "Ask DANAH" bar (askDanah -> openCopilot) and this persistent side
+     panel (sendLiveAgentMessage -> generateLiveAgentResponse). Wiring only the
+     first left the second still keyword-matching: asked "how many moons does
+     Jupiter have?", it replied with a canned paragraph about navigating the
+     sidebar. Worse than a wrong answer — it looked like a working AI giving a
+     confident non-answer, on the panel a minister is most likely to open.     */
+  window.sendLiveAgentMessage = async function sendLiveAgentMessage() {
+    const input = document.querySelector('#laInput');
+    if (!input) return;
+    const q = (input.value || '').trim();
+    if (!q) return;
+
+    if (!state.live) return legacySend(q, input);
+
+    if (LA.typingTimer) { clearTimeout(LA.typingTimer); LA.typingTimer = null; }
+    addAgentMessage('user', q);
+    input.value = '';
+    input.focus();
+
+    LA.abortRequested = false;
+    LA.busy = true;
+    LA._typing = true;
+    if (typeof paintBusy === 'function') paintBusy();
+    if (typeof paintMessages === 'function') paintMessages();
+
+    try {
+      const r = await call('/agent/chat', {
+        method: 'POST',
+        body: { message: q, language: (S && S.lang === 'ar') ? 'ar' : 'en' },
+        timeout: 120000,
+      });
+      LA._typing = false;
+      LA.busy = false;
+      addAgentMessage('agent', formatChat(r), chatActions(r));
+    } catch (e) {
+      LA._typing = false;
+      LA.busy = false;
+      addAgentMessage('agent', `The request failed: ${e.message}`);
+    }
+
+    LA.lastResponseAt = Date.now();
+    if (typeof paintBusy === 'function') paintBusy();
+    if (typeof paintMessages === 'function') paintMessages();
+    const again = document.querySelector('#laInput');
+    if (again) again.focus();
+  };
+
+  function legacySend(q, input) {
+    // Backend down. Keep the prototype's behaviour so a demo survives, but say so.
+    addAgentMessage('user', q);
+    input.value = '';
+    addAgentMessage('agent',
+      'The DANAH backend is offline, so I cannot answer from the knowledge base. ' +
+      'Start the stack (docker compose up -d) and ask again.');
+    if (typeof paintMessages === 'function') paintMessages();
+  }
+
+  /* The panel renders text, not HTML, so the grounding verdict has to be carried in the
+     words themselves. An abstention must read as a deliberate refusal — never as an
+     apology or an error, and never quietly padded into something that sounds like an
+     answer. That refusal is the product. */
+  function formatChat(r) {
+    if (!r.grounded) {
+      return (
+        'ABSTAINED — the corpus does not support an answer.\n\n' +
+        r.answer +
+        '\n\nI will not answer beyond the evidence I hold. Add a document on this subject ' +
+        'and ask again.'
+      );
+    }
+    const cites = (r.citations || [])
+      .map((c) => `[${c.n}] ${c.title}${c.snippet ? ` — ${c.snippet.slice(0, 140)}` : ''}`)
+      .join('\n');
+    const pctv = Math.round((r.confidence || 0) * 100);
+    return (
+      `GROUNDED · ${r.citations.length} citation${r.citations.length === 1 ? '' : 's'} · confidence ${pctv}%\n\n` +
+      `${r.answer}\n\n` +
+      `SOURCES\n${cites}`
+    );
+  }
+
+  function chatActions(r) {
+    const acts = [];
+    if (r.grounded && (r.citations || []).some((c) => c.document_id)) {
+      acts.push({ id: 'go:knowledge', label: 'Open Verified Knowledge' });
+    }
+    if (!r.grounded) acts.push({ id: 'go:knowledge', label: 'Add a document' });
+    return acts;
+  }
+
+  /* =====================================================================
      3. PIPELINE — a real orchestrator run, polled, not a scripted timer
      ===================================================================== */
   window.runPipeline = async function runPipeline() {
@@ -623,6 +717,7 @@
     CIRCUIT.running = !!run;
 
     relabel();
+    markSimulated();
   }
 
   /* The prototype labelled its own simulations honestly — "synthetic demo logic",
@@ -633,15 +728,53 @@
 
      Walk the text nodes rather than the elements — the strings sit inside elements that
      have children, so an element-level scan silently misses every one of them.          */
+  /* Relabel ONLY what is genuinely wired. The first version of this list was too eager: it
+     rewrote "simulated in this prototype" to "running server-side, for real" on the Live
+     Intelligence Engine panel — which is NOT wired. The screen then claimed the panel was real
+     directly above the panel's own honest warning that it was synthetic. Overclaiming is the
+     same failure as underclaiming, and on this product it is the worse one. Panels that are
+     still simulated keep their warnings and get an explicit badge (see markSimulated).       */
   const RELABEL = [
-    ['synthetic demo logic', 'live data · real agents'],
+    ['synthetic demo logic', 'live data · real agents'],   // hero panel — wired
     ['production hooks ready', 'connected to the DANAH backend'],
-    ['simulated in this prototype', 'running server-side, for real'],
-    ['Always-on automation — simulated', 'Always-on automation — real'],
-    ['— simulated;', '— real;'],
-    ['(simulated)', '(live)'],
-    ['Simulate next cycle', 'Run pipeline now'],
+    ['Simulate next cycle', 'Run pipeline now'],           // button now triggers the real run
+    // The Live Agent panel's own footer. Its chat is wired now, so "synthetic data" is false
+    // there — and it sits directly under a real, cited answer.
+    ['human approval required · synthetic data', 'human approval required · live data'],
   ];
+
+  /* Panels v11 ships that are NOT wired to the backend. They still show invented numbers, so
+     they are badged, not silently left to be mistaken for real. Naming them is more useful to
+     the client than hiding them: it says exactly what remains to be built.                   */
+  const SIMULATED_PANELS = [
+    'DANAH Live Intelligence Engine',
+    'What Changed Since Yesterday',
+    'National Strategic Health',
+    'Agent Roster',
+    'Cabinet Affairs agents',
+    'ACTION TRACKER',
+    'NATIONAL SNAPSHOT',
+  ];
+
+  function markSimulated() {
+    const heads = document.querySelectorAll('h1,h2,h3,h4,.card-h,.sec-h,.panel-h,[class*="head"]');
+    heads.forEach((h) => {
+      const label = (h.textContent || '').trim();
+      if (!SIMULATED_PANELS.some((p) => label.toLowerCase().startsWith(p.toLowerCase()))) return;
+      if (h.querySelector('.danah-sim')) return;
+      const b = document.createElement('span');
+      b.className = 'danah-sim';
+      b.textContent = 'SIMULATED — not wired';
+      b.title =
+        'This panel still shows the prototype\'s invented numbers. It is not connected to the ' +
+        'backend. The Command Centre header, Decisions, AI Agents, Chat and Audit are real.';
+      b.style.cssText =
+        'margin-left:9px;padding:2px 7px;border-radius:999px;background:#4a2c00;color:#ffc46b;' +
+        'border:1px solid #8a5a10;font:600 9.5px/1.6 system-ui,sans-serif;letter-spacing:.05em;' +
+        'vertical-align:middle;white-space:nowrap';
+      h.appendChild(b);
+    });
+  }
 
   function relabel(root) {
     const walker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, null);
@@ -665,7 +798,7 @@
   if (typeof _render === 'function') {
     window.render = function () {
       const out = _render.apply(this, arguments);
-      if (state.live) setTimeout(relabel, 0);
+      if (state.live) setTimeout(() => { relabel(); markSimulated(); }, 0);
       return out;
     };
   }
