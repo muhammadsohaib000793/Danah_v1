@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import hmac
+import json
 import sys
 import time
 from dataclasses import dataclass, field
@@ -26,6 +29,61 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+
+#: Deliberately chosen so that each agent has something it should genuinely find: a material risk,
+#: a concrete opportunity, a real regulatory change, and a durable standing fact. Sending news that
+#: warrants none of them would test the weather, not the software.
+ACCEPTANCE_ITEMS: list[dict[str, Any]] = [
+    {
+        "external_id": "acc-risk-1",
+        "title": "Single supplier holds 78 percent of advanced logic capacity as export curbs tighten",
+        "content": (
+            "Industry filings confirm that 78 percent of sub-5nm logic capacity remains "
+            "concentrated in one jurisdiction. Two of the ministry's three contracted electronics "
+            "manufacturers source wafers exclusively from that jurisdiction, and neither holds "
+            "more than six weeks of buffer inventory. A trade interruption would halt domestic "
+            "assembly lines within two months and stall the industrial diversification programme."
+        ),
+        "url": "https://example.gov/acceptance/risk",
+    },
+    {
+        "external_id": "acc-policy-1",
+        "title": "EU adopts CBAM carbon border tariff, binding on steel and aluminium imports from January 2027",
+        "content": (
+            "The European Parliament has formally adopted the Carbon Border Adjustment Mechanism. "
+            "From 1 January 2027, importers of steel, aluminium, cement and fertiliser into the EU "
+            "must surrender certificates matching the embedded emissions of the goods. Non-EU "
+            "exporters must report verified emissions data quarterly or face a default penalty "
+            "rate. The regulation applies to all trading partners, including this ministry's "
+            "aluminium exporters, who shipped 1.2 billion dirhams to the EU last year."
+        ),
+        "url": "https://example.gov/acceptance/policy",
+    },
+    {
+        "external_id": "acc-opportunity-1",
+        "title": "Two foundry operators open tenders for a regional second-source fabrication partner",
+        "content": (
+            "Two tier-one foundry operators have opened competitive tenders for a regional "
+            "second-source fabrication partner, with site selection closing in nine months. Both "
+            "require a hosting state to provide grid capacity of 400MW and a trained technician "
+            "pipeline. The ministry already has 620MW of uncommitted capacity and a technical "
+            "college programme graduating 900 technicians annually."
+        ),
+        "url": "https://example.gov/acceptance/opportunity",
+    },
+    {
+        "external_id": "acc-memory-1",
+        "title": "Cabinet reaffirms binding 65 percent non-oil GDP target for 2030 as the governing mandate",
+        "content": (
+            "The Cabinet has reaffirmed that the 65 percent non-oil GDP target for 2030 is the "
+            "standing mandate against which every sector plan is assessed, and has designated "
+            "semiconductors, logistics and green hydrogen as the three priority sectors for the "
+            "duration. The designation is fixed until 2030 and cannot be revised by individual "
+            "ministries. All future analysis is to be weighed against this mandate."
+        ),
+        "url": "https://example.gov/acceptance/memory",
+    },
+]
 
 GREEN = "\033[32m"
 RED = "\033[31m"
@@ -215,6 +273,85 @@ class Smoke:
         )
 
     # -- phase 2 -------------------------------------------------------------
+    async def push_acceptance_corpus(self) -> None:
+        """Push a fixed corpus through the signed webhook before the run.
+
+        Phase 3 asserts that Risk, Opportunity, Policy and Memory each produce something. Left to
+        run against live news alone, those assertions are a coin toss: the agents are built to
+        abstain rather than invent, so on a day with no regulatory change in the feed the Policy
+        agent *correctly* returns nothing and the criterion fails on a working system. Verified:
+        handed a real regulatory change it produces two insights, and handed durable institutional
+        facts the Memory agent writes three. A gate that goes red for reasons unrelated to the code
+        teaches everyone to ignore it.
+
+        So the run is given material that genuinely warrants each agent's output. The items arrive
+        through `POST /api/ingest/webhook/{source_id}` — HMAC-signed, no JWT — which exercises the
+        licensed-feed path the ministry will actually use, rather than reaching behind the API.
+        """
+        settings = get_settings()
+
+        created = await self.http.post(
+            "/api/sources",
+            headers=self.auth,
+            json={
+                "name": "Acceptance corpus (smoke)",
+                # `type` is how the items arrive (pushed), `connector` is which fetcher owns the
+                # source. A pushed source has no fetcher, hence `custom` — there is no `webhook`
+                # connector, and passing one is a 422.
+                "type": "webhook",
+                "connector": "custom",
+                "config": {},
+                "credibility_score": 0.95,
+                "poll_interval_minutes": 1440,
+                "enabled": True,
+            },
+        )
+        if created.status_code not in (200, 201):
+            existing = await self.http.get("/api/sources", headers=self.auth)
+            match = next(
+                (
+                    s
+                    for s in (existing.json() if existing.status_code == 200 else [])
+                    if s["name"] == "Acceptance corpus (smoke)"
+                ),
+                None,
+            )
+            if match is None:
+                self.record(
+                    "2",
+                    "acceptance corpus is pushed via the signed webhook",
+                    False,
+                    f"could not create the source: HTTP {created.status_code}",
+                )
+                return
+            source_id = match["id"]
+        else:
+            source_id = created.json()["id"]
+
+        body = json.dumps({"items": ACCEPTANCE_ITEMS}).encode("utf-8")
+        secret = settings.webhook_hmac_default_secret.get_secret_value().encode("utf-8")
+        signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+        resp = await self.http.post(
+            f"/api/ingest/webhook/{source_id}",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-DANAH-Signature": f"sha256={signature}",
+            },
+        )
+        payload = resp.json() if resp.status_code == 200 else {}
+        # WebhookResponse reports `accepted` and `duplicates` — an item already held is still an
+        # item in the corpus, so a re-run of the smoke test must count it as landed, not lost.
+        landed = payload.get("accepted", 0) + payload.get("duplicates", 0)
+        self.record(
+            "2",
+            "acceptance corpus is pushed via the signed webhook (HMAC, no JWT)",
+            resp.status_code == 200 and landed == len(ACCEPTANCE_ITEMS),
+            f"HTTP {resp.status_code} accepted={payload.get('accepted', 0)} "
+            f"duplicates={payload.get('duplicates', 0)}",
+        )
+
     async def phase2(self) -> None:
         print(f"\n{BOLD}Phase 2 - real data + agents{RESET}")
 
@@ -250,6 +387,8 @@ class Smoke:
             item_total > 0,
             f"total={item_total}",
         )
+
+        await self.push_acceptance_corpus()
 
         run = await self.http.post("/api/pipeline/run", headers=self.auth, json={"max_items": 12})
         if run.status_code not in (200, 202):
@@ -350,14 +489,7 @@ class Smoke:
                 f"subject={decided.get('subject_type')} status={decided.get('subject_status')}",
             )
 
-        memory = await self.http.get("/api/memory", headers=self.auth)
-        entries = memory.json() if memory.status_code == 200 else []
-        self.record(
-            "3",
-            "memory entries are created and retrievable",
-            len(entries) > 0,
-            f"entries={len(entries)}",
-        )
+        await self.check_memory()
 
         # Read them as the executive, not the admin. Approval notifications are addressed to
         # `role=executive` and the endpoint returns only what is addressed to you or your role,
@@ -369,6 +501,43 @@ class Smoke:
             "notification rows are created and reach the approver",
             len(notes) > 0,
             f"notifications={len(notes)} (as executive)",
+        )
+
+    async def check_memory(self) -> None:
+        """Memory the pipeline wrote, retrieved by *meaning* rather than by keyword.
+
+        There is no `POST /api/memory` on purpose — memory is the highest-value target in the
+        system, so nothing writes to it but an agent. That makes this criterion a genuine test of
+        the Memory agent, and it is a strict one: the agent is told that a restatement of an
+        insight is not a memory, because the insight is already stored, searchable and cited. It
+        writes only what a competent official would be worse off not knowing in a year.
+
+        So this passes only if the run surfaced something standing rather than merely newsworthy —
+        which the acceptance corpus supplies (a Cabinet mandate fixed until 2030). An empty result
+        here is the agent judging, not failing: given nothing durable it returns nothing, and that
+        is the behaviour that keeps institutional memory worth reading.
+        """
+        listing = await self.http.get("/api/memory", headers=self.auth)
+        entries = listing.json() if listing.status_code == 200 else []
+
+        # Semantic, not lexical: the query shares no distinctive wording with the entry, so a hit
+        # can only come through the embedding — proving the real provider round-tripped.
+        search = await self.http.post(
+            "/api/memory/search",
+            headers=self.auth,
+            json={
+                "query": "What economic goal must every sector plan be assessed against?",
+                "k": 5,
+            },
+        )
+        hits = search.json().get("hits", []) if search.status_code == 200 else []
+
+        self.record(
+            "3",
+            "the Memory agent wrote durable context, retrievable by meaning",
+            len(entries) > 0 and len(hits) > 0,
+            f"entries={len(entries)} semantic_hits={len(hits)}"
+            + ("" if entries else "  (agent judged nothing in this run durable)"),
         )
 
     async def _notifications_for_the_approver(self) -> list[Any]:

@@ -616,11 +616,63 @@ async def _persist_briefing(
     return briefing
 
 
+async def _drafted_insights(context: AgentContext) -> list[dict[str, Any]]:
+    """The insights this run drafted, as the digest the Memory agent judges durability from."""
+    if context.run_id is None:
+        return []
+
+    rows = (
+        await context.session.scalars(
+            select(Insight)
+            .where(Insight.run_id == context.run_id)
+            .order_by(Insight.severity.desc())
+        )
+    ).all()
+    return [
+        {
+            "kind": row.kind.value,
+            "severity": row.severity,
+            "confidence": row.confidence,
+            "title": row.title,
+        }
+        for row in rows
+    ]
+
+
+async def _drafted_briefing(context: AgentContext) -> dict[str, Any]:
+    """This run's briefing, if it produced one — the Memory agent reads its decisions section."""
+    if context.run_id is None:
+        return {}
+
+    briefing = await context.session.scalar(
+        select(Briefing).where(Briefing.run_id == context.run_id).limit(1)
+    )
+    if briefing is None:
+        return {}
+    return {"title": briefing.title, "sections": briefing.sections}
+
+
 async def _run_memory(context: AgentContext, stats: RunStats) -> None:
     from app.services.agents.memory_agent import MemoryAgent
     from app.services.memory_service import create_memory
 
     agent = MemoryAgent(context.settings)
+
+    # Show the agent what the run actually produced. `payload` only ever carried the triaged
+    # items, so the Memory agent — whose entire job is to judge what from *this run* is worth
+    # keeping — was asked that question while being told "(This run drafted no insights.)". It
+    # answered "nothing", correctly, every single time: institutional memory recorded nothing,
+    # ever, and the symptom was an agent that looked like it was working (it completed, it cost
+    # money, it returned a valid empty list). The giveaway was tokens_in never changing between
+    # a run with one insight and a run with six.
+    #
+    # Read back from the database rather than threading the drafts through the fan-out: the
+    # analysis agents each commit on their own isolated session, so the rows are the only place
+    # the run's output exists as a whole.
+    context.payload["insights"] = await _drafted_insights(context)
+    context.payload["briefing"] = await _drafted_briefing(context)
+    context.payload["run_summary"] = stats.as_dict()
+
     result = await agent.run(context)
     stats.tokens += result.tokens_in + result.tokens_out
     stats.cost_usd += result.cost_usd

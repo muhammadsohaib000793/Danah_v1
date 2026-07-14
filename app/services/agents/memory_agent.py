@@ -127,6 +127,10 @@ def _decisions_section(briefing: dict[str, Any]) -> str:
 
     for section in sections:
         if isinstance(section, dict) and section.get("key") == _DECISIONS_SECTION_KEY:
-            body = section.get("body") or ""
+            # A briefing section is `{key, heading_en, heading_ar, body_en, body_ar, ...}` — there
+            # is no plain `body`, so reading one silently yielded "" and the decisions section was
+            # never actually shown to the agent. `body` is kept as a fallback for hand-built
+            # sections in tests.
+            body = section.get("body_en") or section.get("body") or ""
             return str(body).strip()
     return ""
