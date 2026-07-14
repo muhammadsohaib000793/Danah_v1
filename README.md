@@ -1,31 +1,54 @@
-# DANAH — Strategic Intelligence Platform (Backend)
+# DANAH — Strategic Intelligence Platform
 
-Enterprise backend for a government ministry's strategic intelligence platform: continuous
-ingestion of external signals, a pipeline of six specialised AI agents, retrieval-grounded chat
-with citations, a human approval gate on every publication, and a hash-chained audit trail.
+A government ministry's strategic intelligence platform: continuous ingestion of external signals,
+a pipeline of six specialised AI agents, retrieval-grounded chat with citations, a human approval
+gate on every publication, and a hash-chained audit trail — behind the v11 command centre.
 
 > **Grounded or silent · Human in the loop · Sovereign by default · Audit everything · Bilingual first-class**
 
-The v11 HTML front end (`DANAH_Strategic_Intelligence_Platform_v11.html`) is the existing UI
-prototype this backend was designed for. It is **read-only reference** — this repository does not
-modify or rebuild it.
+**This is the full product, not a backend in isolation.** The v11 command centre is wired to the
+real API and served by it at `/`. What was a simulation is now real:
+
+| | Prototype (v11) | Now |
+|---|---|---|
+| Sign-in | a role dropdown, "Dummy SSO" | argon2 + JWT, enforced server-side |
+| Live Agent | keyword matching → canned text | a real model, real citations, real confidence — and it **abstains** rather than invent |
+| Pipeline | 14 strings on a 420 ms timer | six real AI agents over real ingested data, polled live |
+| Approvals | splicing a local array | a real human gate; approval **publishes** and is written to the audit chain |
+| Data | synthetic, lost on refresh | PostgreSQL — World Bank, GDELT, RSS, ReliefWeb |
 
 ---
 
-## Quick start
+## Quick start — the whole product in one command
 
 ```bash
-cp .env.example .env          # then set JWT_SECRET_KEY + provider keys
-docker compose up             # api, worker, scheduler, postgres+pgvector, redis
+cp .env.example .env          # set JWT_SECRET_KEY, ADMIN_INITIAL_PASSWORD, OPENAI_API_KEY
+docker compose up -d          # api, worker, scheduler, postgres+pgvector, redis
 docker compose exec api python -m scripts.seed
-curl localhost:8000/api/healthz
 ```
 
-Interactive API docs: <http://localhost:8000/docs>
+Then open **<http://localhost:8000>** and sign in.
 
-**No API keys yet?** The stack still builds, boots and passes its full test suite — LLM-backed
-routes return a clear `503 llm_not_configured` instead of faking answers. See
-[`FIRST_RUN.md`](FIRST_RUN.md) for the exact commands to run once keys are added.
+| | |
+|---|---|
+| **Command centre** | <http://localhost:8000> |
+| Sign in as | `admin@ministry.gov` (admin) or `executive@ministry.gov` (approver) |
+| Password | whatever you set as `ADMIN_INITIAL_PASSWORD` — **change both after first login** |
+| API docs | <http://localhost:8000/docs> |
+| Metrics | <http://localhost:8000/metrics> |
+
+A green **LIVE — REAL AI BACKEND** badge sits bottom-right. If it says **DEMO** in orange, the
+backend is unreachable and the screens are showing the prototype's synthetic data — nothing is ever
+passed off as live.
+
+**No API keys yet?** The stack still builds, boots and passes its full test suite — LLM-backed routes
+return a clear `503 llm_not_configured` rather than faking an answer. See [`FIRST_RUN.md`](FIRST_RUN.md).
+
+### Rebuilding the UI after editing the prototype
+
+```bash
+python -m scripts.build_ui    # re-wires DANAH_..._v11.html -> web/index.html
+```
 
 ---
 
