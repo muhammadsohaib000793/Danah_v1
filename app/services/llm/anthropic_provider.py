@@ -212,6 +212,22 @@ class AnthropicProvider(LLMProviderClient):
             return exc.status_code >= _SERVER_ERROR_STATUS
         return False
 
+    def is_rate_limit(self, exc: Exception) -> bool:
+        return isinstance(exc, anthropic.RateLimitError)
+
+    def retry_after_seconds(self, exc: Exception) -> float | None:
+        """Read Anthropic's `Retry-After` off the 429 so the wait matches when the quota reopens."""
+        if not isinstance(exc, anthropic.APIStatusError) or exc.response is None:
+            return None
+        raw = exc.response.headers.get("retry-after")
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            # An HTTP-date form is legal here; leave it to the caller's exponential backoff.
+            return None
+
     # -- lifecycle -----------------------------------------------------------
     async def aclose(self) -> None:
         if self._client is not None:

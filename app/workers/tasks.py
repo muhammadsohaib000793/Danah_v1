@@ -23,11 +23,20 @@ from app.logging import new_request_id, set_request_id
 log = structlog.get_logger(__name__)
 
 
-def bind_request_id(ctx: dict[str, Any]) -> str:
-    """Carry the enqueuing request's id into the job, or mint one for cron-originated work."""
-    request_id = ctx.get("request_id") or new_request_id()
-    set_request_id(str(request_id))
-    return str(request_id)
+def bind_request_id(ctx: dict[str, Any], request_id: str | None = None) -> str:
+    """Carry the enqueuing request's id into the job, or mint one for cron-originated work.
+
+    The id has to be passed as an ordinary task argument. ARQ has no job-metadata channel and
+    never populates `ctx["request_id"]`: its `enqueue_job` reserves only `_job_id`, `_queue_name`,
+    `_defer_until`, `_defer_by`, `_expires` and `_job_try`, and forwards every other keyword to
+    the task itself. Enqueuing with `_request_id=...` therefore did not annotate the job — it
+    called `embed_document(ctx, doc_id, _request_id=...)`, which raises TypeError before the task
+    body runs. Uploads sat at `pending` and manual pipeline runs never started, while the API
+    happily returned 202.
+    """
+    resolved = request_id or ctx.get("request_id") or new_request_id()
+    set_request_id(str(resolved))
+    return str(resolved)
 
 
 async def worker_ping(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -47,14 +56,16 @@ async def worker_ping(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- Phase 1 ---------------------------------------------------------------
-async def embed_document(ctx: dict[str, Any], document_id: str) -> dict[str, Any]:
+async def embed_document(
+    ctx: dict[str, Any], document_id: str, request_id: str | None = None
+) -> dict[str, Any]:
     """Extract → chunk → embed → index one uploaded document.
 
     `index_document` records its own failure on the row (status `failed`, reason in `error`), so
     this task does not re-raise: an ARQ retry would re-run an extraction that is deterministically
     going to fail again, and the user already has the reason in the API.
     """
-    bind_request_id(ctx)
+    bind_request_id(ctx, request_id)
     from app.services.rag.indexer import index_document
 
     factory = get_session_factory()
@@ -128,13 +139,14 @@ async def run_pipeline(
     trigger: str = PipelineTrigger.MANUAL.value,
     max_items: int | None = None,
     agents: list[str] | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute a full agent pipeline run against a pre-created `pipeline_runs` row.
 
     The row is created synchronously by `POST /api/pipeline/run` so the caller gets a `run_id` to
     poll immediately; this task fills it in.
     """
-    bind_request_id(ctx)
+    bind_request_id(ctx, request_id)
     from app.services.orchestrator import execute_run
 
     factory = get_session_factory()

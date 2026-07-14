@@ -121,6 +121,45 @@ async def seed_admin(session: Any, settings: Settings) -> User:
     return admin
 
 
+async def seed_approver(session: Any, settings: Settings) -> User | None:
+    """Create the first executive, i.e. someone who can actually approve.
+
+    Not a convenience. Nothing DANAH produces is ever published without a named human deciding
+    to publish it, and every approval notification is addressed to `role=executive` — so a
+    deployment with only an admin has an approval queue no one can clear and no one is told
+    about. The logs say as much on every run: `email_no_recipients role=executive`. The whole
+    point of the product is a human in the loop; seeding zero humans able to be that loop makes
+    it a queue that fills and is never drained.
+
+    The password is the same initial secret as the admin's and must be rotated on first login.
+    """
+    from sqlalchemy import select
+
+    email = settings.approver_email.lower()
+    existing = await session.scalar(select(User).where(User.email == email))
+    if existing is not None:
+        log.info("approver_exists", email=email, role=existing.role.value)
+        return existing
+
+    password = settings.admin_initial_password.get_secret_value()
+    if not password:
+        return None
+
+    approver = User(
+        id=uuid.uuid4(),
+        email=email,
+        full_name="Ministry Executive",
+        password_hash=hash_password(password),
+        role=Role.EXECUTIVE,
+        is_active=True,
+    )
+    session.add(approver)
+    await session.flush()
+    log.info("approver_created", email=email)
+    print(f"  [ok] executive (approver) created: {email}  (same initial password — rotate it)")
+    return approver
+
+
 async def seed_sources(session: Any, settings: Settings) -> int:
     from sqlalchemy import select
 
@@ -219,6 +258,7 @@ async def main() -> None:
     factory = get_session_factory()
     async with factory() as session:
         admin = await seed_admin(session, settings)
+        await seed_approver(session, settings)
         sources = await seed_sources(session, settings)
         docs, indexed = await seed_documents(session, settings, admin)
         await session.commit()

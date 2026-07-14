@@ -135,7 +135,10 @@ async def _enqueue_indexing(document_id: uuid.UUID, settings: Settings) -> None:
 
     try:
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await pool.enqueue_job("embed_document", str(document_id), _request_id=get_request_id())
+        # `request_id`, not `_request_id`: ARQ forwards any keyword it does not reserve straight
+        # to the task, so the underscored form was passed to `embed_document` as an argument it
+        # does not accept and the job died with a TypeError before doing any work.
+        await pool.enqueue_job("embed_document", str(document_id), request_id=get_request_id())
         await pool.aclose()
     except Exception as exc:
         log.error(

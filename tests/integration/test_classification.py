@@ -77,13 +77,20 @@ async def make_classified_document(
 
 
 async def make_classified_insight(
-    db: AsyncSession, *, classification: Classification, title: str
+    db: AsyncSession, *, classification: Classification, title: str, body: str = SECRET
 ) -> Insight:
+    """`body` defaults to the secret, so callers must opt *out* for a non-sensitive record.
+
+    The secret must live only in the OFFICIAL_SENSITIVE rows. Planting it in the INTERNAL one
+    too — which a viewer is entitled to read — makes "NIGHTJAR is absent from the viewer's
+    response" fail on a record that was never sensitive, and the assertion stops meaning
+    anything: it can no longer distinguish a working clearance filter from a broken one.
+    """
     insight = Insight(
         id=uuid.uuid4(),
         kind=InsightKind.RISK,
         title=title,
-        body=SECRET,
+        body=body,
         severity=5,
         likelihood=0.8,
         confidence=0.9,
@@ -117,7 +124,10 @@ async def sensitive_corpus(db: AsyncSession, fake_embedder: Any) -> dict[str, An
         db, classification=Classification.OFFICIAL_SENSITIVE, title="NIGHTJAR exposure"
     )
     public_insight = await make_classified_insight(
-        db, classification=Classification.INTERNAL, title="Trade concentration"
+        db,
+        classification=Classification.INTERNAL,
+        title="Trade concentration",
+        body="Advanced logic capacity is concentrated in a single jurisdiction.",
     )
     return {
         "secret_doc": secret_doc,
@@ -281,7 +291,14 @@ class TestMemoryAndDashboard:
             "/api/memory/search", headers=headers, json={"query": "NIGHTJAR codename", "k": 5}
         )
         assert search.status_code == 200
-        assert "NIGHTJAR" not in search.text
+
+        # The response echoes the caller's own query, so a bare "NIGHTJAR" not in text" would
+        # fail on the word the analyst just typed — which discloses nothing they did not already
+        # write. What must never come back is the memory: no hits, no title, no content.
+        body = search.json()
+        assert body["hits"] == [], "an over-cleared memory must not be retrievable"
+        assert SECRET not in search.text
+        assert "standing context" not in search.text
 
     async def test_the_dashboard_count_does_not_leak_the_existence_of_sensitive_insights(
         self, client: AsyncClient, sensitive_corpus: dict[str, Any], auth_headers: Any

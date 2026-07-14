@@ -24,6 +24,8 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -50,7 +52,11 @@ from app.config import Settings, get_settings
 from app.db import Base
 from app.enums import Classification, Role
 
-EMBEDDING_DIM = 1024
+# Derived, never pinned: the fake embedder must emit whatever width the configured provider
+# emits, or every vector write fails against the `vector(n)` column the migration built from
+# the same setting. Hard-coding this made the whole integration suite fail on the Voyage→OpenAI
+# switch (1024 → 1536) for a reason that had nothing to do with the code under test.
+EMBEDDING_DIM = get_settings().embedding_dim
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +130,34 @@ async def db(engine: Any) -> AsyncIterator[AsyncSession]:
         await conn.execute(text("ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_truncate"))
         await conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
         await conn.execute(text("ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_truncate"))
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_rate_limit_window() -> AsyncIterator[None]:
+    """Give every test an empty rate-limit window.
+
+    The limiter's window lives in Redis, not in Postgres, so the `db` fixture's TRUNCATE does
+    not touch it. Without this, requests from one test count against the next: the suite shares
+    a single client identity, so a busy test silently spends the budget of the tests that follow
+    and they start failing with 429s that have nothing to do with what they assert.
+    """
+    from app.security.rate_limit import reset_limiter
+
+    async def _flush() -> None:
+        try:
+            client = Redis.from_url(get_settings().redis_url, socket_connect_timeout=1)
+            keys = [k async for k in client.scan_iter("ratelimit:*")]
+            if keys:
+                await client.delete(*keys)
+            await client.aclose()
+        except (RedisError, OSError):
+            pass  # No Redis: the limiter fails open anyway, so there is nothing to clear.
+
+    reset_limiter()
+    await _flush()
+    yield
+    reset_limiter()
+    await _flush()
 
 
 # ---------------------------------------------------------------------------

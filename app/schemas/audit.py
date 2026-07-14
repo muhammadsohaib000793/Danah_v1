@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, IPvAnyAddress, field_serializer
 
 from app.enums import ActorType
 from app.schemas.common import DanahModel
@@ -20,10 +20,17 @@ class AuditEntryOut(DanahModel):
     action: str
     subject_type: str | None = None
     subject_id: str | None = None
-    ip: str | None = None
+    # The column is INET, so the driver hands back an IPv4Address/IPv6Address, never a str.
+    # Declared as a bare `str` this model rejected every audit entry that carried an IP — which
+    # is every entry a human action produces — and the audit endpoints 500'd.
+    ip: IPvAnyAddress | str | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
     prev_hash: str
     entry_hash: str
+
+    @field_serializer("ip")
+    def _ip_as_str(self, value: IPvAnyAddress | str | None) -> str | None:
+        return None if value is None else str(value)
 
 
 class AuditVerifyResponse(DanahModel):

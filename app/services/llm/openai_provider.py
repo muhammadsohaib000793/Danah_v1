@@ -142,6 +142,23 @@ class OpenAIProvider(LLMProviderClient):
         # an answer, so replaying it cannot duplicate a completion we were billed for.
         return isinstance(exc, openai.APIConnectionError)
 
+    def is_rate_limit(self, exc: Exception) -> bool:
+        return isinstance(exc, openai.RateLimitError)
+
+    def retry_after_seconds(self, exc: Exception) -> float | None:
+        """Read OpenAI's `Retry-After` off the 429 so the wait matches when the quota reopens."""
+        if not isinstance(exc, openai.APIStatusError) or exc.response is None:
+            return None
+        raw = exc.response.headers.get("retry-after")
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            # The header may be an HTTP-date rather than seconds. Rather than parse it, fall back
+            # to the caller's exponential backoff.
+            return None
+
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.close()

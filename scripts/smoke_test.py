@@ -359,11 +359,34 @@ class Smoke:
             f"entries={len(entries)}",
         )
 
-        notifications = await self.http.get("/api/notifications", headers=self.auth)
-        notes = notifications.json() if notifications.status_code == 200 else []
+        # Read them as the executive, not the admin. Approval notifications are addressed to
+        # `role=executive` and the endpoint returns only what is addressed to you or your role,
+        # so checking as an admin asserts nothing: it returns an empty list whether the
+        # notification system works or not.
+        notes = await self._notifications_for_the_approver()
         self.record(
-            "3", "notification rows are created", len(notes) > 0, f"notifications={len(notes)}"
+            "3",
+            "notification rows are created and reach the approver",
+            len(notes) > 0,
+            f"notifications={len(notes)} (as executive)",
         )
+
+    async def _notifications_for_the_approver(self) -> list[Any]:
+        settings = get_settings()
+        login = await self.http.post(
+            "/api/auth/login",
+            json={
+                "email": settings.approver_email,
+                "password": settings.admin_initial_password.get_secret_value(),
+            },
+        )
+        if login.status_code != 200:
+            return []
+        token = login.json()["access_token"]
+        resp = await self.http.get(
+            "/api/notifications", headers={"Authorization": f"Bearer {token}"}
+        )
+        return list(resp.json()) if resp.status_code == 200 else []
 
     # -- phase 4 -------------------------------------------------------------
     async def phase4(self) -> None:

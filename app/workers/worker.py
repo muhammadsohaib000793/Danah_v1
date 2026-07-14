@@ -85,14 +85,39 @@ def _cron_jobs() -> list[Any]:
     settings = get_settings()
     minute, hour = _parse_cron_hh_mm(settings.pipeline_schedule_cron)
 
+    # `name=` is load-bearing, not cosmetic. arq defaults a cron job's name to
+    # `cron:<function>`, enqueues it onto the shared queue under *that* name, and only registers
+    # it in the registry of a worker that was given `cron_jobs`. The queue-consuming worker has
+    # none — so it dequeued every scheduled job and failed it with "function not found", while
+    # the scheduler that could run them never got the chance. Silent: cron fired on time, the
+    # logs said a job was picked up, and no source was ever polled. Naming each cron job after
+    # the task the worker already registers is what makes "the scheduler enqueues, the worker
+    # executes" true rather than merely intended.
     return [
         # Check every 5 minutes for sources that are due. The task itself honours each source's
         # `poll_interval_minutes`, so this tick is cheap and idempotent.
-        cron(tasks.sync_all_due_sources, minute=set(range(0, 60, 5)), run_at_startup=False),
+        cron(
+            tasks.sync_all_due_sources,
+            name="sync_all_due_sources",
+            minute=set(range(0, 60, 5)),
+            run_at_startup=False,
+        ),
         # The daily agent pipeline, ending in the bilingual executive briefing.
-        cron(tasks.daily_brief, hour={hour}, minute={minute}, run_at_startup=False),
+        cron(
+            tasks.daily_brief,
+            name="daily_brief",
+            hour={hour},
+            minute={minute},
+            run_at_startup=False,
+        ),
         # Cost guardrail: notify administrators if DAILY_COST_ALERT_USD was exceeded today.
-        cron(tasks.check_daily_cost, hour={23}, minute={55}, run_at_startup=False),
+        cron(
+            tasks.check_daily_cost,
+            name="check_daily_cost",
+            hour={23},
+            minute={55},
+            run_at_startup=False,
+        ),
     ]
 
 

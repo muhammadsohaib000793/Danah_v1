@@ -437,7 +437,12 @@ async def _source_health(
 
     rows = (
         await session.execute(
-            select(Source, func.coalesce(recent_items.c.items, 0))
+            # `recent_items.c["items"]`, not `.c.items`: ColumnCollection is dict-like, so the
+            # attribute resolves to the bound `.items()` method and silently shadows the column
+            # labelled "items". SQLAlchemy then passes the method into coalesce() as a bind
+            # parameter and asyncpg rejects it at execution time — this endpoint 500'd for every
+            # caller. The label is only reachable by subscript.
+            select(Source, func.coalesce(recent_items.c["items"], 0))
             .outerjoin(recent_items, recent_items.c.source_id == Source.id)
             .order_by(Source.name)
         )

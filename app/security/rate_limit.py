@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from uuid import uuid4
 
 import structlog
 from redis.asyncio import Redis
@@ -64,7 +65,12 @@ class RateLimiter:
             async with client.pipeline(transaction=True) as pipe:
                 pipe.zremrangebyscore(key, 0, cutoff)
                 pipe.zcard(key)
-                pipe.zadd(key, {f"{now}:{get_request_id()}": now})
+                # The member must be unique per request or ZADD updates the existing entry
+                # instead of adding one, and the window silently under-counts. Neither the
+                # clock nor the request id can be relied on for that: time.time() is coarse
+                # (~15ms on Windows), so a burst lands on one timestamp, and the id is "-"
+                # outside a request context. A burst is exactly when the limit must hold.
+                pipe.zadd(key, {f"{now}:{uuid4().hex}": now})
                 pipe.expire(key, WINDOW_SECONDS)
                 results = await pipe.execute()
 

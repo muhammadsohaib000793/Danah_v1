@@ -35,6 +35,15 @@ from app.logging import get_request_id
 
 log = structlog.get_logger(__name__)
 
+# Ceiling on any retry wait. Long enough to outlast a per-minute token quota, short enough that
+# a misreported header cannot park a pipeline step for the whole job timeout.
+_MAX_RETRY_AFTER_SECONDS = 65.0
+
+# First wait after a rate limit, doubled per attempt (20s → 40s → capped). Sized against a
+# 60-second token window: with the default 3 attempts the last one lands after the window has
+# rolled, which is the only wait length that can actually succeed.
+_RATE_LIMIT_FLOOR_SECONDS = 20.0
+
 TModel = TypeVar("TModel", bound=BaseModel)
 
 
@@ -91,6 +100,14 @@ class LLMProviderClient(ABC):
     @abstractmethod
     def is_retryable(self, exc: Exception) -> bool:
         """True for transient failures (429, 5xx, timeouts, connection resets)."""
+
+    def retry_after_seconds(self, exc: Exception) -> float | None:
+        """How long the provider says to wait, from the 429's `Retry-After` header."""
+        return None
+
+    def is_rate_limit(self, exc: Exception) -> bool:
+        """True when the provider refused because a quota window is full, not because we erred."""
+        return False
 
     @abstractmethod
     async def aclose(self) -> None: ...
@@ -277,6 +294,34 @@ class DefaultLLMGateway:
                 # Exponential backoff with full jitter — avoids a thundering herd of retries
                 # when a provider rate-limits the whole fleet at once.
                 delay = min(2**attempt, 8) * (0.5 + random.random())  # noqa: S311 - jitter, not crypto
+
+                if provider.is_rate_limit(exc):
+                    # A token quota is measured over a *minute*, so a retry has to be able to
+                    # outlast one. Both the provider's own `Retry-After` (observed at 2s, then
+                    # 7s) and this exponential curve are far shorter than that — every attempt
+                    # lands while the window is still closed, and the step fails ~10s in.
+                    #
+                    # The window is usually full of *our own* traffic: the analysis agents fan
+                    # out in parallel, and OpenAI charges `max_tokens` against the quota at
+                    # request time, so a run reserves far more than it spends. The agent that
+                    # runs last (Briefing) is the one that pays for it.
+                    #
+                    # So take the longest of the three — what the provider asked for, the
+                    # exponential curve, and a floor that doubles into the next window — and
+                    # jitter it so a parallel fan-out does not resume in lockstep.
+                    stated = provider.retry_after_seconds(exc) or 0.0
+                    floor = _RATE_LIMIT_FLOOR_SECONDS * (2**attempt)
+                    delay = max(stated, delay, floor)
+
+                delay = min(delay, _MAX_RETRY_AFTER_SECONDS) + random.random()  # noqa: S311
+                log.info(
+                    "llm_retry_scheduled",
+                    provider=provider.name.value,
+                    attempt=attempt + 1,
+                    delay_seconds=round(delay, 1),
+                    rate_limited=provider.is_rate_limit(exc),
+                    request_id=get_request_id(),
+                )
                 await asyncio.sleep(delay)
                 continue
 

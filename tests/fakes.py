@@ -16,8 +16,14 @@ import hashlib
 import json
 import math
 import re
+import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 _TOKEN_RE = re.compile(r"[a-z0-9؀-ۿ]+")
 
@@ -104,13 +110,26 @@ class FakeLLMGateway:
     def push(self, payload: Any, *, match: str | None = None) -> None:
         self.scripted.append(_Scripted(payload=payload, match=match))
 
-    def _take(self, prompt: str) -> Any | None:
+    def _take(self, prompt: str, *, structured: bool) -> Any | None:
+        """Hand back the next scripted payload whose *shape* fits this call.
+
+        An agent turn is not one call. `BaseAgent` first runs a tool-use loop — a plain
+        `complete()` with tools and no schema — and only then makes the structured call. A queue
+        that serves the next payload to whoever asks first lets that tool-loop call swallow the
+        payload scripted for the structured call: the agent then falls back to a synthesised
+        empty output, and the test fails claiming the pipeline produced no insight when in truth
+        the fake mis-delivered the one it was given. So a dict payload answers only a structured
+        call, and a string payload only a text call.
+        """
         for item in self.scripted:
             if item.used:
                 continue
-            if item.match is None or item.match.lower() in prompt.lower():
-                item.used = True
-                return item.payload
+            if item.match is not None and item.match.lower() not in prompt.lower():
+                continue
+            if structured != (not isinstance(item.payload, str)):
+                continue
+            item.used = True
+            return item.payload
         return None
 
     # -- gateway interface -------------------------------------------------
@@ -191,7 +210,7 @@ class FakeLLMGateway:
 
             raise LLMGatewayError("Simulated provider failure")
 
-        scripted = self._take(prompt)
+        scripted = self._take(prompt, structured=json_schema is not None)
         if scripted is not None:
             text = scripted if isinstance(scripted, str) else json.dumps(scripted)
         elif json_schema is not None:
@@ -222,8 +241,32 @@ class FakeLLMGateway:
         return f"According to the available sources, {snippet} [1]"
 
 
-def _synthesise(schema: dict[str, Any], prompt: str) -> Any:
-    """Build a minimal instance satisfying a JSON schema (objects, arrays, scalars, enums)."""
+def _synthesise(schema: dict[str, Any], prompt: str, root: dict[str, Any] | None = None) -> Any:
+    """Build a minimal instance satisfying a JSON schema (objects, arrays, scalars, enums).
+
+    `$ref` and `anyOf` must be resolved, not skipped. Pydantic emits a `$ref` into `$defs` for
+    every nested model and an `anyOf` for every `Optional[...]`, so a synthesiser that ignores
+    them quietly emits a string where an object belongs — which then fails schema validation and
+    surfaces as a bogus `llm_gateway_error` from the agent, hiding whatever the test meant to
+    assert. `RiskOutput.insights: list[RiskInsight]` is exactly that case.
+    """
+    root = root if root is not None else schema
+
+    ref = schema.get("$ref")
+    if ref:
+        name = ref.rsplit("/", 1)[-1]
+        target = root.get("$defs", {}).get(name)
+        if target is None:
+            raise KeyError(f"FakeLLMGateway cannot resolve {ref!r}; is it defined in $defs?")
+        return _synthesise(target, prompt, root)
+
+    # Optional[X] / unions: take the first branch that is not the null arm.
+    for key in ("anyOf", "oneOf"):
+        if key in schema:
+            branches = [b for b in schema[key] if b.get("type") != "null"]
+            chosen = branches[0] if branches else schema[key][0]
+            return _synthesise(chosen, prompt, root)
+
     kind = schema.get("type")
 
     if "enum" in schema:
@@ -231,14 +274,19 @@ def _synthesise(schema: dict[str, Any], prompt: str) -> Any:
         return enum_values[0]
 
     if kind == "object":
+        # Every property, not just the required ones. Pydantic marks any field with a default as
+        # optional, and the agent outputs lean on defaults heavily — `RiskOutput.insights` and
+        # `DraftInsight.citations` both default to []. Synthesising only the required fields
+        # therefore yields a *valid but empty* insight set, and the pipeline tests see a run that
+        # succeeds while producing nothing. An empty draft is indistinguishable from an honest
+        # "no risk found", so the failure looks like a product bug rather than a hollow fake.
         props: dict[str, Any] = schema.get("properties", {})
-        required = schema.get("required", list(props.keys()))
-        return {name: _synthesise(props[name], prompt) for name in required if name in props}
+        return {name: _synthesise(sub, prompt, root) for name, sub in props.items()}
 
     if kind == "array":
         items = schema.get("items", {"type": "string"})
         count = max(1, int(schema.get("minItems", 1)))
-        return [_synthesise(items, prompt) for _ in range(count)]
+        return [_synthesise(items, prompt, root) for _ in range(count)]
 
     if kind == "integer":
         lo = int(schema.get("minimum", 1))
@@ -256,5 +304,22 @@ def _synthesise(schema: dict[str, Any], prompt: str) -> Any:
 
     if kind == "null":
         return None
+
+    # `format` is part of the contract, not decoration: a field typed as a UUID rejects the
+    # description text the fallback would otherwise return. Where the schema wants an id, reuse
+    # one from the prompt if it is there — the Signal agent triages the item ids it was given,
+    # so a random id would parse and then silently match nothing.
+    fmt = schema.get("format")
+    if fmt == "uuid":
+        found = _UUID_RE.search(prompt)
+        return found.group(0) if found else str(uuid.uuid4())
+    if fmt == "date-time":
+        return datetime.now(UTC).isoformat()
+    if fmt == "date":
+        return datetime.now(UTC).date().isoformat()
+    if fmt == "email":
+        return "analyst@ministry.gov"
+    if fmt in {"uri", "url"}:
+        return "https://example.gov/source"
 
     return schema.get("description", "synthesised") or "synthesised"

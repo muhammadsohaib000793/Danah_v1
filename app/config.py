@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 14
     admin_email: str = "admin@ministry.gov"
+    # The first executive. Approval notifications are addressed to `role=executive`, and nothing
+    # is ever published without an executive deciding to publish it — so a deployment seeded with
+    # an admin alone has an approval queue that no one can clear and no one is told about.
+    approver_email: str = "executive@ministry.gov"
     admin_initial_password: SecretStr = SecretStr("")
     rate_limit_login_per_minute: int = 5
     rate_limit_chat_per_minute: int = 20

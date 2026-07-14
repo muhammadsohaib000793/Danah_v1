@@ -136,15 +136,18 @@ async def _enqueue_run(
 
     try:
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        # `_request_id` is ARQ's job-metadata channel: the worker rebinds it, so the pipeline's
-        # logs carry the id of the request that asked for the run.
+        # `request_id` is an ordinary task argument. ARQ has no job-metadata channel: it reserves
+        # only `_job_id`, `_queue_name`, `_defer_until`, `_defer_by`, `_expires` and `_job_try`,
+        # and forwards everything else to the task. `_request_id=` was therefore handed to
+        # `run_pipeline` as an unexpected keyword and every manual run died on a TypeError while
+        # the API still returned 202 and a pollable id.
         await pool.enqueue_job(
             "run_pipeline",
             str(run_id),
             PipelineTrigger.MANUAL.value,
             max_items,
             agents,
-            _request_id=get_request_id(),
+            request_id=get_request_id(),
         )
         await pool.aclose()
     except Exception as exc:

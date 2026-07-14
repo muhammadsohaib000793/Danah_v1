@@ -201,7 +201,12 @@ async def execute_run(
             await _run_memory(context, stats)
 
         # Items that were analysed are marked so, so tomorrow's run does not re-analyse them.
-        if triaged_ids:
+        # Only when an analysis agent actually ran: marking an item ANALYZED is what stops it
+        # ever being picked up again, so doing it after a triage-only run (`agents=["signal"]`,
+        # or every analysis agent deselected) would retire relevant intelligence that no agent
+        # has read. The item would sit at ANALYZED with nothing analysing it — silently dropped,
+        # and invisible precisely because the pipeline reported success.
+        if triaged_ids and analysis_agents:
             await session.execute(
                 update(IngestedItem)
                 .where(IngestedItem.id.in_(triaged_ids))
