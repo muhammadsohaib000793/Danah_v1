@@ -1,41 +1,58 @@
 # DANAH — Build Report
 
-**Build run:** 2026-07-13 · autonomous, Phases 0–4 · **Credential mode: `PENDING-CREDENTIALS`**
+**Build run:** 2026-07-13 → 2026-07-14 · autonomous, Phases 0–4
+**Provider:** OpenAI single-vendor (`gpt-4o` / `gpt-4o-mini` / `text-embedding-3-small`, 1536-dim)
+**Status:** verified live against real credentials — **23 of 24 acceptance criteria pass**
 
 ---
 
 ## 1. Read this first
 
-The backend is **built**: 17-table schema, six agents with production prompts, four ingestion
-connectors, hybrid RAG, the approval gate, a hash-chained audit log, rate limiting, and all 25
-endpoints from master prompt §7.7. `ruff`, `mypy --strict` (101 source files) and the unit suite are
-green.
+The backend is built **and verified running**: 17-table schema, six agents with production prompts,
+four ingestion connectors, hybrid RAG, the approval gate, a hash-chained audit log, rate limiting,
+and all 25 endpoints from master prompt §7.7.
 
-Two things are **not** finished, and both are stated plainly rather than papered over:
+**Gates: 173 tests pass · `ruff` clean · `mypy --strict` clean (101 files) · `make smoke` 23/24
+against live OpenAI.**
 
-1. **No provider keys were available**, so every acceptance criterion that needs a live model is
-   marked `PENDING-CREDENTIALS`, never `PASSED`. Nothing was stubbed to fake a pass —
-   `scripts/smoke_test.py` (`make smoke`) proves them for real once keys are added. See
-   [`FIRST_RUN.md`](FIRST_RUN.md).
+### What the first real test run found
 
-2. **The machine ran out of disk, which killed the Docker engine mid-gate.** `C:` reached
-   **100% full (0 bytes free)**. That is the single root cause of everything that failed late in
-   this build: the daemon started returning `500 Internal Server Error` on every call, the Postgres
-   and Redis containers died with it, `docker compose build` aborted with an EOF, the test run hung
-   (it could not write), and even `git commit` failed with *"No space left on device"*.
+The 82 integration tests had **never executed** — the disk filled before they could. Running them
+against a real PostgreSQL and Redis, and then running the stack against a real provider, surfaced
+**seven production bugs**. Every one of them failed *silently*: the system reported success while
+doing nothing.
 
-   Freeing the caches this build owned (`.mypy_cache`, `__pycache__`, temp) recovered ~3.5 GB —
-   enough to commit the work safely, but Docker Desktop's backend service (`com.docker.service`,
-   start type **Manual**) still will not start, and starting it needs **Administrator rights** that
-   this session does not have.
+| # | Bug | What it actually did |
+|---|---|---|
+| 1 | Rate limiter's Redis ZSET member was `{time}:{request_id}` | `time.time()` is coarse (~15ms) and the id is `-` outside a request, so a burst collapsed onto one member and `ZADD` *updated* it. Six requests stored four. **The limiter did not limit under burst** — the only case it exists for. |
+| 2 | Both enqueue sites passed `_request_id=` to ARQ | ARQ reserves only `_job_id`/`_queue_name`/`_defer_until`/`_defer_by`/`_expires`/`_job_try` and forwards the rest **to the task** — so the call was `embed_document(ctx, id, _request_id=…)`, a `TypeError` before any work. **Document indexing and every manual pipeline run silently did nothing**, while the API returned `202` and a pollable id. |
+| 3 | Cron jobs took arq's default name `cron:<function>` | Only a worker given `cron_jobs` registers that name; the queue-consuming worker had none, so it dequeued every scheduled job and failed it with *"function not found"*. **Sources were never polled.** |
+| 4 | `AuditEntryOut.ip` declared `str`; the column is `INET` | The driver returns `IPv4Address`. **Audit endpoints 500'd on any entry carrying an IP** — i.e. every entry a human action produces. |
+| 5 | `recent_items.c.items` | `ColumnCollection` is dict-like, so `.items` resolves to the **method**, shadowing the column. SQLAlchemy passed the bound method into `coalesce()` as a bind parameter. **`/api/dashboard/sources` 500'd for every caller.** |
+| 6 | Orchestrator marked items `ANALYZED` even when no analysis agent ran | `ANALYZED` is what stops an item being picked up again. A triage-only run **retired relevant intelligence that no agent had read** — invisible precisely because the pipeline reported success. |
+| 7 | The Memory agent was never shown the run it was asked to remember | `context.payload` never carried `insights`/`briefing`/`run_summary`, so the digest rendered *"(This run drafted no insights.)"*. It answered "nothing durable", correctly, **on every run ever executed — institutional memory recorded nothing, ever.** The tell was `tokens_in`: 4729 on every run, identical whether the run drafted one insight or six. |
 
-   **`C:\Users\DEV\AppData\Local\Docker\wsl` is 102.7 GB.** It was left untouched: it holds every
-   image and volume on the machine, including an unrelated `crm_postgres` container's data.
+Two more, found only by running against a real provider:
 
-   The integration suite runs against a **real** PostgreSQL + pgvector and a **real** Redis by
-   design (`docs/DECISIONS.md` #14 — SQLite has no vectors, no FTS, no `jsonb` and no append-only
-   trigger, so it would test a different schema than the one that ships). It therefore could not be
-   completed. **§5(a) below finishes it.**
+- **Rate-limit backoff could not outlast the window it was waiting on.** OpenAI charges `max_tokens`
+  against the per-minute token quota *at request time*, so the parallel analysis fan-out exhausts
+  the window and the agent that runs last (Briefing) pays for it. OpenAI's own `Retry-After` said
+  2s, then 7s — shorter than the minute the window takes to roll — so all three retries landed while
+  it was still closed. Rate-limit retries now back off 20s → 40s.
+- **No one could approve anything.** Approval notifications are addressed to `role=executive` and
+  nothing is ever published without an executive publishing it — but the seed created only an admin.
+  The logs said so on every run: `email_no_recipients role=executive`. The human in the loop is the
+  product; there was no human able to be it. An executive is now seeded.
+
+### The one criterion that does not pass
+
+**`memories=0` on a news corpus — and that is the agent working, not failing.** The Memory agent is
+told that a restatement of an insight is not a memory, because the insight is already stored,
+searchable and cited. Handed a run's analysis it declines. Verified this is judgement and not
+malfunction: handed durable standing facts it writes entries and calls `get_memory` first to avoid
+duplicating them (3 entries, 6 dedup checks). It is left as it is, because the alternative is an
+agent that manufactures memories — the one thing it exists not to do. Memory is written by agents
+only; there is deliberately no `POST /api/memory`.
 
 ---
 

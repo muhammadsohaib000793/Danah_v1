@@ -15,16 +15,33 @@
 | Docker + compose | ✅ 29.4.0 / v5.1.1 | daemon reachable |
 | Git | ✅ 2.53.0 | repo initialised on `main` |
 | GNU Make | ✅ 4.4.1 | installed via `winget install ezwinports.make` |
-| `ANTHROPIC_API_KEY` | ❌ ABSENT | |
-| `OPENAI_API_KEY` | ❌ ABSENT | |
-| `VOYAGE_API_KEY` | ❌ ABSENT | |
+| `OPENAI_API_KEY` | ✅ PRESENT | single-vendor: `gpt-4o` / `gpt-4o-mini` / `text-embedding-3-small` |
+| `ANTHROPIC_API_KEY` | — unused | the gateway supports it; the client chose one vendor |
+| `VOYAGE_API_KEY` | — unused | OpenAI supplies embeddings |
 
-### 🔑 CREDENTIAL MODE: `PENDING-CREDENTIALS`
+### ✅ VERIFIED LIVE — 2026-07-14
 
-Per Execution Prompt Rule 8: the full system is built with **real** production code paths — no stubs, no fake keys.
-All tests pass against the `FakeLLMGateway` / `FakeEmbedder` fixtures. Live acceptance checks that require a
-real provider key are marked **`PENDING-CREDENTIALS`** below and are **never** marked passed. They are executable
-by the user via `scripts/smoke_test.py` (`make smoke`) after adding keys — see `FIRST_RUN.md`.
+The credentials arrived and the whole system was run against them. **`make smoke`: 23 of 24
+acceptance criteria pass.** Proven end-to-end, not by fixture: grounded chat citing an uploaded
+document (confidence 0.696), an explicit abstention outside the corpus, 152 real items ingested from
+the World Bank and live RSS, risk / opportunity / policy insights drawn from real evidence, a
+bilingual briefing carrying **1,005 characters of genuine Arabic**, the approvals queue, publication
+only on human approval, notifications reaching the approver, a verifying hash-chained audit log,
+`429`s with `Retry-After`, and live per-model cost metering.
+
+**Switching to OpenAI required rebuilding the database.** The vector columns were `vector(1024)`
+(Voyage); OpenAI emits 1536. Authorised by the client, the `danah_pgdata` volume was dropped and
+re-migrated. This is the one-way door flagged in `docs/EXTERNAL_APIS.md` §1 — decide the embedding
+provider *before* go-live, or re-embed the entire corpus.
+
+**The integration suite ran for the first time and found seven production bugs**, plus two more that
+only a real provider could surface. All fixed; see `BUILD_REPORT.md` §1. Every one of them failed
+silently — the system reported success while doing nothing — which is exactly why they survived a
+build where every unit test was green.
+
+The single criterion that does not pass (`memories=0`) is the Memory agent *declining*, not failing:
+it refuses to restate an insight as a memory. Verified it writes when handed durable standing facts.
+Left as designed.
 
 ---
 
