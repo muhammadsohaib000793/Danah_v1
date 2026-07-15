@@ -170,6 +170,7 @@ def _register_optional_routers(app: FastAPI) -> None:
         ("app.api.knowledge", "/api/knowledge"),
         ("app.api.sources", "/api/sources"),
         ("app.api.items", "/api/items"),
+        ("app.api.tasks", "/api/tasks"),
         ("app.api.pipeline", "/api/pipeline"),
         ("app.api.insights", "/api/insights"),
         ("app.api.briefings", "/api/briefings"),

@@ -17,6 +17,7 @@ from app.models.memory import MemoryEntry
 from app.models.notification import Notification
 from app.models.pipeline import PipelineRun, PipelineStep
 from app.models.source import IngestedItem, Source
+from app.models.task import Task
 from app.models.usage import ApiUsage
 from app.models.user import RefreshToken, User
 
@@ -38,5 +39,6 @@ __all__ = [
     "PipelineStep",
     "RefreshToken",
     "Source",
+    "Task",
     "User",
 ]

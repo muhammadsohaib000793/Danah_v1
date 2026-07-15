@@ -1735,6 +1735,7 @@
     knowledge: ['Verified Knowledge', 'Upload documents. Once indexed, the Live Agent can cite them in its answers.'],
     sources: ['Sources', 'The connectors DANAH ingests from, with live health. Sync one on demand.'],
     reports: ['Reports & Briefings', 'Executive briefings composed by the Briefing Agent — always bilingual, English and Arabic.'],
+    tasks: ['Action Tracker', 'Decisions turned into owned, tracked actions — move each from To-do to Done; every change is audited.'],
     approvals: ['Approvals', 'Nothing DANAH produces is published until you decide here. Every decision is written to the audit log.'],
     memory: ['Strategic Memory', 'What the agents remember, so the ministry never re-proposes what it already tried.'],
     users: ['User Management', 'Create accounts and set roles — clearance follows the role and is enforced server-side.'],
@@ -1781,7 +1782,7 @@
     if (!state.live) return;
     let seen = false; try { seen = localStorage.getItem('danah.tour.seen') === '1'; } catch (_) {}
     if (seen) return;
-    const order = ['home', 'risks', 'feed', 'chats', 'agents', 'knowledge', 'sources', 'reports', 'approvals', 'memory', 'users', 'governance', 'alerts', 'settings'];
+    const order = ['home', 'risks', 'feed', 'chats', 'agents', 'knowledge', 'sources', 'reports', 'tasks', 'approvals', 'memory', 'users', 'governance', 'alerts', 'settings'];
     TOUR.steps = order.filter((r) => TOUR_GUIDE[r] && (typeof window.navLocked !== 'function' || !window.navLocked(r)));
     TOUR.i = 0;
     setTimeout(danahTourShow, 500);
@@ -1790,6 +1791,117 @@
   window.danahReplayTour = function () { try { localStorage.removeItem('danah.tour.seen'); } catch (_) {} danahMaybeTour(); };
   const _protoReplayTour = window.replayTour;
   window.replayTour = function () { if (state.live) return window.danahReplayTour(); return typeof _protoReplayTour === 'function' ? _protoReplayTour() : undefined; };
+
+  /* ======================= ACTION TRACKER (tasks) — real backend, real table ======================= */
+  if (typeof NAV !== 'undefined' && Array.isArray(NAV) && !NAV.some((n) => n.id === 'tasks')) {
+    const gi = NAV.findIndex((n) => n.id === 'approvals');
+    const entry = { id: 'tasks', label: 'Action Tracker', icon: 'target' };
+    if (gi >= 0) NAV.splice(gi, 0, entry); else NAV.push(entry);
+  }
+  const _navLockedT = window.navLocked;
+  window.navLocked = function (route) {
+    if (route === 'tasks') return !state.live;
+    return typeof _navLockedT === 'function' ? _navLockedT(route) : false;
+  };
+  const _goT = window.go;
+  if (typeof _goT === 'function') {
+    window.go = function (route) { const out = _goT.apply(this, arguments); if (state.live && route === 'tasks') refreshTasks(); return out; };
+  }
+
+  const tasksState = { items: [], loaded: false, loading: false, msg: '' };
+  async function refreshTasks() {
+    if (!state.live) return;
+    tasksState.loading = true;
+    if (S && S.route === 'tasks' && typeof render === 'function') render();
+    try { const rows = await call('/tasks?limit=200').catch(() => null); tasksState.items = Array.isArray(rows) ? rows : []; } catch (_) { /* keep */ }
+    tasksState.loading = false; tasksState.loaded = true;
+    if (S && S.route === 'tasks' && typeof render === 'function') render();
+  }
+  window.danahRefreshTasks = refreshTasks;
+
+  window.danahTaskAdvance = async function (id, statusVal) {
+    tasksState.msg = 'Updating…'; if (typeof render === 'function') render();
+    try { await call('/tasks/' + id, { method: 'PATCH', body: { status: statusVal } }); tasksState.msg = 'Action updated — recorded in the audit log.'; await refreshTasks(); }
+    catch (e) { tasksState.msg = e.status === 403 ? 'Updating actions requires analyst clearance or above.' : 'Update failed: ' + e.message; if (typeof render === 'function') render(); }
+  };
+  window.danahNewTask = function () {
+    if (typeof openModal !== 'function') return;
+    openModal(`<div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="mh-ic" style="background:var(--navy);color:#fff">${ic('target', 21)}</div><div><h3>New action</h3><p>Track a decision through to done. It is created at OFFICIAL classification.</p></div><button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Title</label><input id="ntTitle" class="inp" placeholder="e.g. Stand up the national talent academy"></div>
+        <div class="field"><label>Owner</label><input id="ntOwner" class="inp" placeholder="Ministry / person responsible"></div>
+        <div class="field"><label>Urgency</label><div class="select" style="width:100%"><select id="ntUrg"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option><option value="critical">critical</option></select></div></div>
+        <div class="field"><label>Notes (optional)</label><textarea id="ntDesc" class="inp" rows="3"></textarea></div>
+        <div id="ntErr" style="display:none;color:var(--red);font-size:12.5px;margin-top:4px"></div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="danahCreateTask()">Create action</button></div></div>`);
+  };
+  window.danahCreateTask = async function () {
+    const title = (document.getElementById('ntTitle') || {}).value || '';
+    const owner = (document.getElementById('ntOwner') || {}).value || '';
+    const urgency = (document.getElementById('ntUrg') || {}).value || 'medium';
+    const description = (document.getElementById('ntDesc') || {}).value || '';
+    const errEl = document.getElementById('ntErr');
+    if (!title.trim()) { if (errEl) { errEl.textContent = 'A title is required.'; errEl.style.display = 'block'; } return; }
+    try {
+      await call('/tasks', { method: 'POST', body: { title: title.trim(), owner: owner.trim(), urgency, description: description.trim() } });
+      if (typeof closeModal === 'function') closeModal();
+      tasksState.msg = 'Action created — recorded in the audit log.';
+      await refreshTasks();
+    } catch (e) { if (errEl) { errEl.textContent = e.status === 403 ? 'Creating actions requires analyst clearance or above.' : (e.message || 'Create failed.'); errEl.style.display = 'block'; } }
+  };
+
+  function taskUrgPill(u) { const m = { critical: 'red', high: 'orange', medium: 'blue', low: 'green' }; return `<span class="pill bg-${m[u] || 'blue'} tone-${m[u] || 'blue'}">${esc(u)}</span>`; }
+  function taskCard(t, analyst) {
+    const tone = t.status === 'done' ? 'green' : t.status === 'blocked' ? 'red' : t.status === 'in_progress' ? 'blue' : 'orange';
+    const actions = analyst ? (
+      t.status === 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="danahTaskAdvance('${t.id}','in_progress')">${ic('play', 13)} Start</button>`
+        : t.status === 'in_progress' ? `<button class="btn btn-ghost btn-sm" onclick="danahTaskAdvance('${t.id}','done')">${ic('check', 13)} Complete</button><button class="btn btn-ghost btn-sm" onclick="danahTaskAdvance('${t.id}','blocked')">Block</button>`
+          : t.status === 'blocked' ? `<button class="btn btn-ghost btn-sm" onclick="danahTaskAdvance('${t.id}','in_progress')">${ic('play', 13)} Resume</button>`
+            : `<button class="btn btn-ghost btn-sm" onclick="danahTaskAdvance('${t.id}','pending')">${ic('refresh', 13)} Reopen</button>`
+    ) : '';
+    return `<div class="card card-pad" style="margin-bottom:10px">
+      <div style="display:flex;gap:9px;align-items:flex-start">
+        <div class="lic bg-${tone} tone-${tone}" style="width:30px;height:30px;flex:none">${ic('checks', 15)}</div>
+        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;line-height:1.35">${esc(t.title)}</div>
+          ${t.description ? `<div class="muted" style="font-size:11.5px;margin-top:3px">${esc(t.description)}</div>` : ''}</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">
+        ${t.owner ? `<span class="tag">${ic('user', 11)} ${esc(t.owner)}</span>` : ''}
+        ${taskUrgPill(t.urgency)}
+        ${t.status === 'blocked' ? '<span class="pill bg-red tone-red">Blocked</span>' : ''}
+        <span class="cls-tag">${esc((t.classification || '').replace('_', '-'))}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin:11px 0 4px"><div class="meter"><i style="width:${t.progress || 0}%;background:var(--${tone})"></i></div><span class="muted" style="font-size:11px;font-weight:600">${t.progress || 0}%</span></div>
+      ${actions ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${actions}</div>` : ''}
+    </div>`;
+  }
+  function realTasksPage() {
+    if (!tasksState.loaded && !tasksState.loading) setTimeout(refreshTasks, 0);
+    const analyst = isAnalyst();
+    const cols = [
+      ['To do', (t) => t.status === 'pending'],
+      ['In progress', (t) => t.status === 'in_progress' || t.status === 'blocked'],
+      ['Done', (t) => t.status === 'done'],
+    ];
+    const board = cols.map((col) => {
+      const items = tasksState.items.filter(col[1]);
+      return `<div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h3 style="font-family:var(--display,inherit);font-size:12.5px;font-weight:700;letter-spacing:.5px">${col[0].toUpperCase()}</h3><span class="muted" style="font-size:12px;font-weight:600">${items.length}</span></div>
+        ${items.map((t) => taskCard(t, analyst)).join('') || `<div class="card card-pad muted" style="font-size:12px;text-align:center">None</div>`}
+      </div>`;
+    }).join('');
+    const msg = tasksState.msg ? `<div class="callout ${/fail|require/i.test(tasksState.msg) ? '' : 'amber'}" style="margin-bottom:14px">${esc(tasksState.msg)}</div>` : '';
+    return `
+      <div class="page-head"><div class="page-title"><h1>Action Tracker</h1><p>Decisions turned into owned, tracked actions — clearance-filtered, with every change written to the audit log.${analyst ? '' : ' Read-only for your role.'}</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshTasks()">Refresh</button>${analyst ? `<button class="btn btn-primary" onclick="danahNewTask()">${ic('target', 16)} New action</button>` : ''}</div></div>
+      ${msg}
+      ${tasksState.loading && !tasksState.items.length ? '<div class="callout amber">Loading…</div>' : `<div class="grid g-3" style="align-items:start">${board}</div>`}`;
+  }
+  if (typeof PAGES !== 'undefined') {
+    PAGES.tasks = function () { return state.live ? realTasksPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+  }
 
   /* The hero panel — the first thing anyone sees — shipped with invented numbers:
      "48 sources checked · 23 items updated · 91% confidence". They were honest in a

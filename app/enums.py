@@ -94,6 +94,15 @@ class Urgency(StrEnum):
     CRITICAL = "critical"
 
 
+class TaskStatus(StrEnum):
+    """Lifecycle of a tracked action (the Action Tracker)."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    BLOCKED = "blocked"
+    DONE = "done"
+
+
 class PipelineTrigger(StrEnum):
     MANUAL = "manual"
     SCHEDULED = "scheduled"
