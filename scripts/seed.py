@@ -175,9 +175,18 @@ async def seed_demo_users(session: Any, settings: Settings) -> None:
     if not password:
         return
 
+    # A fuller demo roster so the login shows the ministry's ranks, not just four accounts. Every
+    # account is real and its access is enforced server-side; the titles are labels on the same
+    # four backend roles (admin, executive, analyst, viewer) and their three clearance ceilings.
+    # Minister/DG collapse to EXECUTIVE (they can approve); advisor/analyst to ANALYST; focal/guest
+    # to VIEWER. Same initial password as the rest; rotate on first login.
     wanted = [
-        (settings.analyst_email.lower(), "Ministry Analyst", Role.ANALYST),
-        (settings.viewer_email.lower(), "Ministry Viewer", Role.VIEWER),
+        (settings.analyst_email.lower(), "Strategic Analyst", Role.ANALYST),
+        (settings.viewer_email.lower(), "Entity Focal Point", Role.VIEWER),
+        ("minister@ministry.gov", "Ministry Minister", Role.EXECUTIVE),
+        ("dg@ministry.gov", "Director General", Role.EXECUTIVE),
+        ("advisor@ministry.gov", "Senior Policy Advisor", Role.ANALYST),
+        ("guest@ministry.gov", "Guest Viewer", Role.VIEWER),
     ]
     for email, full_name, role in wanted:
         existing = await session.scalar(select(User).where(User.email == email))

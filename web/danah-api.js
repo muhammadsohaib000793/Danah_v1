@@ -159,40 +159,65 @@
   /* =====================================================================
      1. LOGIN — real credentials, not a role dropdown
      ===================================================================== */
+  /* The ministry's ranks, each a REAL seeded account, shown with the role and clearance the
+     backend actually enforces. The prototype had eleven client-side roles that changed only the
+     chrome; these seven are real logins whose access the server decides. The four backend roles
+     (admin / executive / analyst / viewer) are the true access tiers the titles map onto. */
+  const PERSONAS = [
+    { email: 'admin@ministry.gov',     title: 'Cabinet Head',          role: 'admin',     clr: 'OFFICIAL-SENSITIVE', can: 'Full control · approvals · audit', c: '#c79a2e' },
+    { email: 'executive@ministry.gov', title: 'Secretary General',     role: 'executive', clr: 'OFFICIAL-SENSITIVE', can: 'Approve & publish',                 c: '#5b8cff' },
+    { email: 'minister@ministry.gov',  title: 'Minister',              role: 'executive', clr: 'OFFICIAL-SENSITIVE', can: 'Approve & publish',                 c: '#5b8cff' },
+    { email: 'dg@ministry.gov',        title: 'Director General',      role: 'executive', clr: 'OFFICIAL-SENSITIVE', can: 'Approve & publish',                 c: '#5b8cff' },
+    { email: 'analyst@ministry.gov',   title: 'Strategic Analyst',     role: 'analyst',   clr: 'OFFICIAL',           can: 'Upload docs · run pipeline',        c: '#e08a2b' },
+    { email: 'advisor@ministry.gov',   title: 'Senior Policy Advisor', role: 'analyst',   clr: 'OFFICIAL',           can: 'Upload docs · run pipeline',        c: '#e08a2b' },
+    { email: 'viewer@ministry.gov',    title: 'Entity Focal Point',    role: 'viewer',    clr: 'INTERNAL',           can: 'Read-only · classification-limited', c: '#2ecc71' },
+    { email: 'guest@ministry.gov',     title: 'Guest Viewer',          role: 'viewer',    clr: 'INTERNAL',           can: 'Read-only · classification-limited', c: '#2ecc71' },
+  ];
+  window.danahPickPersona = function (email) {
+    const e = document.getElementById('loginEmail'); if (e) e.value = email;
+    document.querySelectorAll('.danah-persona').forEach((c) => { c.style.borderColor = '#243049'; });
+    const card = document.querySelector('.danah-persona[data-email="' + email + '"]');
+    if (card) card.style.borderColor = '#5b8cff';
+    const p = document.getElementById('loginPass'); if (p) p.focus();
+  };
+
   window.renderLogin = function renderLogin() {
     const r = document.querySelector('#login-root');
     if (!r) return;
     const emblem = (typeof emblemSVG === 'function') ? emblemSVG() : '';
+    const cards = PERSONAS.map((p) => `
+      <button type="button" class="danah-persona" data-email="${p.email}" onclick="danahPickPersona('${p.email}')"
+        style="text-align:left;border:1px solid ${p.email === 'admin@ministry.gov' ? '#5b8cff' : '#243049'};background:#0e1526;border-radius:11px;padding:11px 12px;cursor:pointer;transition:border-color .12s;display:flex;flex-direction:column;gap:5px">
+        <div style="display:flex;align-items:center;gap:7px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${p.c};flex:none"></span>
+          <span style="color:#e8eefc;font-size:13px;font-weight:700">${p.title}</span>
+          <span style="margin-left:auto;font-size:9px;font-weight:700;letter-spacing:.05em;color:${p.c};background:${p.c}22;border:1px solid ${p.c}55;padding:2px 7px;border-radius:20px;text-transform:uppercase">${p.role}</span>
+        </div>
+        <div style="font-size:11px;color:#8fa0c4">Clearance <b style="color:#c7d4ef">${p.clr}</b></div>
+        <div style="font-size:11px;color:#7f8db0">${p.can}</div>
+      </button>`).join('');
     r.innerHTML = `
       <div class="login-scrim" role="dialog" aria-modal="true" aria-label="Official Sign-In">
-        <div class="login-card">
+        <div class="login-card" style="max-width:620px">
           <div class="login-top">
             <div class="login-emblem">${emblem}</div>
             <div><h1>UNITED ARAB EMIRATES</h1><h2>MINISTRY OF CABINET AFFAIRS</h2></div>
           </div>
-          <div class="login-sub">
-            DANAH — Agentic AI Command Centre. Sign in to continue.
-          </div>
-          <div class="login-field">
-            <label>Email</label>
-            <input id="loginEmail" type="email" autocomplete="username"
-                   value="admin@ministry.gov"
-                   style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;
-                          background:#0e1526;color:#e8eefc;font-size:14px" />
-          </div>
-          <div class="login-field">
-            <label>Password</label>
+          <div class="login-sub">DANAH — Agentic AI Command Centre. Choose an official account, or sign in directly.</div>
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#7f8db0;margin:4px 2px 9px;text-transform:uppercase">Official accounts · role &amp; clearance shown</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px">${cards}</div>
+          <div class="login-field"><label>Email</label>
+            <input id="loginEmail" type="email" autocomplete="username" value="admin@ministry.gov"
+              style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;background:#0e1526;color:#e8eefc;font-size:14px" /></div>
+          <div class="login-field"><label>Password</label>
             <input id="loginPass" type="password" autocomplete="current-password"
-                   style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;
-                          background:#0e1526;color:#e8eefc;font-size:14px" />
-          </div>
+              style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;background:#0e1526;color:#e8eefc;font-size:14px" /></div>
           <div id="loginErr" style="display:none;color:#ff8095;font-size:12.5px;margin:8px 2px 0"></div>
-          <button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:14px">
-            Sign in
-          </button>
+          <button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:14px">Sign in</button>
           <div style="margin-top:12px;font-size:11.5px;color:#7f8db0;line-height:1.55">
-            Authenticated server-side (argon2 + JWT). Your role and clearance are decided by the
-            backend and enforced on every request — never in this browser.
+            All accounts are real and share the demo password you set. Roles and clearance are
+            decided by the backend (argon2 + JWT) and enforced on every request — never in this
+            browser. The four backend roles are the real access tiers these titles map onto.
           </div>
         </div>
       </div>`;
@@ -273,6 +298,8 @@
 
     await hydrate();
     if (typeof render === 'function') render();
+    // If they land (or reload) directly on a live-data page, populate it now — not only on nav.
+    refreshForRoute((typeof S !== 'undefined' && S.route) || 'home');
     if (typeof toast === 'function') toast(`Signed in as ${me.role} — connected to the live backend`);
   }
 
@@ -753,7 +780,9 @@
     try {
       const [insights, approvals, dash] = await Promise.all([
         call('/insights?limit=25').catch(() => null),
-        call('/approvals?status=pending').catch(() => null),
+        // The approval queue is executive-only server-side; a viewer/analyst hydrate must not
+        // fire a request the server will (correctly) 403, or the console fills with noise.
+        (isExecutive() ? call('/approvals?status=pending').catch(() => null) : Promise.resolve(null)),
         call('/dashboard/summary').catch(() => null),
       ]);
 
@@ -779,7 +808,9 @@
       // verified against a hash chain. The prototype ships invented entries ("Fatma Almulla
       // approved…"). Left in place beside real ones, they would be indistinguishable —
       // and an audit trail you cannot trust is not an audit trail. Replace, never merge.
-      const audit = await call('/audit?limit=60').catch(() => null);
+      // The audit log is admin-only server-side; only an admin fetches it, so a lower role's
+      // hydrate never fires a request the server refuses.
+      const audit = backendRole() === 'admin' ? await call('/audit?limit=60').catch(() => null) : null;
       const arows = Array.isArray(audit) ? audit : (audit?.items || []);
       if (typeof AUDIT !== 'undefined') {
         AUDIT.length = 0;
@@ -878,7 +909,7 @@
   };
 
   async function refreshAlerts() {
-    if (!state.live || typeof ALERTS === 'undefined') return;
+    if (!state.live || !tok.access || typeof ALERTS === 'undefined') return;
     let rows;
     try {
       rows = await call('/notifications?limit=50');
@@ -944,7 +975,7 @@
   }
 
   async function refreshDocuments() {
-    if (!state.live) return;
+    if (!state.live || !tok.access) return;
     try {
       const [docs, counts] = await Promise.all([
         call('/knowledge/documents?limit=100').catch(() => null),
@@ -1122,15 +1153,348 @@
     };
   }
 
+  /* =====================================================================
+     EXTENDED BACKEND COVERAGE
+     Real, already-built backend routes the prototype never had a screen for.
+     Each is gated to match the server so a user is never shown a page the API
+     would 403, and nothing is invented — an empty backend yields an empty page.
+       · Approvals        GET /approvals · POST /approvals/{id}/decision   (executive+)
+       · Briefings        GET /briefings · GET /briefings/{id} · POST /generate (EN+AR)
+       · Strategic Memory GET /memory                                       (analyst+)
+       · Intelligence Feed GET /items                                       (any role)
+     ===================================================================== */
+  function backendRole() { return (state.user && state.user.role) || ''; }
+  function isExecutive() { const r = backendRole(); return r === 'admin' || r === 'executive'; }
+  function isAnalyst() { const r = backendRole(); return r === 'admin' || r === 'executive' || r === 'analyst'; }
+
+  /* ---- add the new destinations to the sidebar (deduped) ---- */
+  if (typeof NAV !== 'undefined' && Array.isArray(NAV)) {
+    const addBefore = (beforeId, entry) => {
+      if (NAV.some((n) => n.id === entry.id)) return;
+      const i = NAV.findIndex((n) => n.id === beforeId);
+      if (i >= 0) NAV.splice(i, 0, entry); else NAV.push(entry);
+    };
+    addBefore('agents', { id: 'feed', label: 'Intelligence Feed', icon: 'activity' });
+    addBefore('governance', { id: 'approvals', label: 'Approvals', icon: 'checks' });
+    addBefore('governance', { id: 'memory', label: 'Strategic Memory', icon: 'memory' });
+  }
+
+  /* ---- hide routes a role/mode cannot use, so the menu never lies ---- */
+  const _protoNavLocked = window.navLocked;
+  window.navLocked = function (route) {
+    if (route === 'approvals' || route === 'feed' || route === 'memory') {
+      if (!state.live) return true;                 // no real data offline; prototype has no such page
+      if (route === 'approvals') return !isExecutive();
+      if (route === 'memory') return !isAnalyst();
+      return false;                                 // feed: any authenticated role
+    }
+    return typeof _protoNavLocked === 'function' ? _protoNavLocked(route) : false;
+  };
+
+  /* ======================= APPROVALS ======================= */
+  const apprState = { items: [], filter: 'pending', loading: false, msg: '' };
+
+  async function refreshApprovals() {
+    if (!state.live || !isExecutive()) return;
+    apprState.loading = true;
+    if (S && S.route === 'approvals' && typeof render === 'function') render();
+    try {
+      const rows = await call('/approvals?status=' + apprState.filter + '&limit=100').catch(() => null);
+      apprState.items = Array.isArray(rows) ? rows : [];
+    } catch (_) { /* keep last good */ }
+    apprState.loading = false;
+    if (S && S.route === 'approvals' && typeof render === 'function') render();
+  }
+  window.danahRefreshApprovals = refreshApprovals;
+  window.danahApprFilter = function (f) { apprState.filter = f; apprState.msg = ''; refreshApprovals(); };
+
+  window.danahDecide = async function (id, decision) {
+    apprState.msg = decision === 'approved' ? 'Publishing…' : decision === 'rejected' ? 'Rejecting…' : 'Sending back…';
+    if (typeof render === 'function') render();
+    try {
+      await call('/approvals/' + id + '/decision', { method: 'POST', body: { decision, comment: '' } });
+      apprState.msg = decision === 'approved'
+        ? 'Approved & published — written to the tamper-evident audit log.'
+        : decision === 'rejected'
+          ? 'Rejected — written to the audit log.'
+          : 'Sent back for changes — written to the audit log.';
+      await refreshApprovals();
+      if (typeof hydrate === 'function') await hydrate();   // publication changes insights + dashboard
+      if (typeof render === 'function') render();
+    } catch (e) {
+      apprState.msg = e.status === 409
+        ? 'Already decided — a second decision is refused; the first is part of the record.'
+        : e.status === 403 ? 'Only an executive or admin can decide approvals.'
+          : 'Decision failed: ' + e.message;
+      if (typeof render === 'function') render();
+    }
+  };
+
+  function sevPill(sev) {
+    if (sev == null) return '';
+    const map = { 5: ['red', 'Critical'], 4: ['orange', 'High'], 3: ['blue', 'Medium'], 2: ['green', 'Low'], 1: ['green', 'Low'] };
+    const x = map[sev] || ['navy', 'Sev ' + sev];
+    return `<span class="pill bg-${x[0]} tone-${x[0]}">${x[1]}</span>`;
+  }
+
+  function realApprovalsPage() {
+    if (!isExecutive()) {
+      return `
+        <div class="page-head"><div class="page-title"><h1>Approvals</h1><p>The human-in-the-loop publication gate.</p></div></div>
+        <div class="callout section" style="border-color:var(--line);background:var(--surface-2)">${ic('lock', 13)} &nbsp;Only an <b>executive</b> or <b>admin</b> can act on the approval queue — nothing DANAH produces is published without a named human here. Your role (<b>${esc(backendRole() || 'viewer')}</b>) can read published intelligence but cannot approve. Sign in as <b>executive@ministry.gov</b> to use this queue.</div>`;
+    }
+    const tabs = ['pending', 'approved', 'rejected', 'changes_requested'].map((f) =>
+      `<button class="btn ${apprState.filter === f ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="danahApprFilter('${f}')">${f.replace('_', ' ')}</button>`).join(' ');
+
+    const rows = apprState.items.length
+      ? apprState.items.map((a) => `
+        <div class="card card-pad" style="margin-bottom:12px">
+          <div style="display:flex;gap:14px;align-items:flex-start">
+            <div class="lic bg-orange tone-orange" style="width:38px;height:38px;flex:none">${ic(a.subject_type === 'briefing' ? 'doc' : 'zap', 18)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:600">${esc(a.subject_title || '(untitled ' + a.subject_type + ')')}</div>
+              <div class="muted" style="font-size:12.5px;margin-top:4px;line-height:1.5">${esc(a.subject_summary || '')}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px">
+                <span class="tag">${esc(a.subject_type)}</span>
+                ${a.subject_confidence != null ? `<span class="tag">${Math.round(a.subject_confidence * 100)}% confidence</span>` : ''}
+                ${sevPill(a.subject_severity)}
+                <span class="tag">${ic('bot', 11)} ${esc(a.requested_by_agent)}</span>
+                <span class="tag">${esc(relativeTime(a.created_at))}</span>
+              </div>
+            </div>
+          </div>
+          ${apprState.filter === 'pending'
+        ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-2)">
+                 <button class="btn btn-primary btn-sm" onclick="danahDecide('${a.id}','approved')">${ic('check', 14)} Approve &amp; publish</button>
+                 <button class="btn btn-ghost btn-sm" onclick="danahDecide('${a.id}','changes_requested')">Request changes</button>
+                 <button class="btn btn-ghost btn-sm" onclick="danahDecide('${a.id}','rejected')">Reject</button>
+               </div>`
+        : `<div class="muted" style="font-size:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2)">${esc(a.status)}${a.decided_at ? ' · ' + esc(relativeTime(a.decided_at)) : ''}${a.comment ? ' · “' + esc(a.comment) + '”' : ''}</div>`}
+        </div>`).join('')
+      : `<div class="empty">${ic('check', 42)}<h4>Nothing ${apprState.filter === 'pending' ? 'awaiting approval' : 'in this view'}</h4><p>${apprState.filter === 'pending' ? 'The queue is clear. Run the pipeline to generate insights that need a decision.' : 'No items with this status.'}</p></div>`;
+
+    const msg = apprState.msg
+      ? `<div class="callout ${/fail|already|only/i.test(apprState.msg) ? '' : 'amber'}" style="margin-bottom:14px">${esc(apprState.msg)}</div>` : '';
+
+    return `
+      <div class="page-head">
+        <div class="page-title"><h1>Approvals</h1><p>Nothing DANAH produces is published until a named human decides here. Every decision is written to the hash-chained audit log.</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshApprovals()">Refresh</button></div>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px">${tabs}</div>
+      ${msg}
+      ${apprState.loading ? '<div class="callout amber">Loading the queue…</div>' : rows}`;
+  }
+
+  /* ======================= BRIEFINGS (Reports) ======================= */
+  const briefState = { items: [], loading: false, msg: '' };
+
+  async function refreshBriefings() {
+    if (!state.live) return;
+    briefState.loading = true;
+    if (S && S.route === 'reports' && typeof render === 'function') render();
+    try {
+      const rows = await call('/briefings?limit=30').catch(() => null);
+      briefState.items = Array.isArray(rows) ? rows : [];
+    } catch (_) { /* keep last good */ }
+    briefState.loading = false;
+    if (S && S.route === 'reports' && typeof render === 'function') render();
+  }
+  window.danahRefreshBriefings = refreshBriefings;
+
+  window.danahOpenBriefing = async function (id) {
+    if (typeof openModal !== 'function') return;
+    openModal(`<div class="modal wide" onclick="event.stopPropagation()"><div class="modal-body" style="padding:44px;text-align:center;color:var(--ink-3)">Loading briefing…</div></div>`);
+    try {
+      const b = await call('/briefings/' + id);
+      const secs = (b.sections || []).map((s) => `
+        <div style="margin:16px 0;padding-top:16px;border-top:1px solid var(--line-2)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+            <div><h4 class="dc-h">${esc(s.heading_en)}</h4><p class="story-b">${esc(s.body_en)}</p></div>
+            <div dir="rtl"><h4 class="dc-h">${esc(s.heading_ar)}</h4><p class="story-b">${esc(s.body_ar)}</p></div>
+          </div>
+        </div>`).join('');
+      const cites = (b.citations || []).length
+        ? `<h4 class="dc-h">Sources</h4><div class="dc-tags">${b.citations.map((c) => `<span class="tag">${ic('shield', 11)} ${esc(c.title || ('source ' + c.n))}</span>`).join('')}</div>` : '';
+      openModal(`<div class="modal wide" onclick="event.stopPropagation()">
+        <div class="modal-head"><div class="mh-ic bg-blue tone-blue">${ic('doc', 21)}</div>
+          <div><h3>${esc(b.title)}</h3><p>Bilingual briefing · ${esc((b.classification || '').replace('_', '-'))} · ${esc(b.status)}${b.approval_status ? ' · approval: ' + esc(b.approval_status) : ''}</p></div>
+          <button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div>
+        <div class="modal-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+            <div><h4 class="dc-h">English</h4><p class="story-b">${esc(b.body_en)}</p></div>
+            <div dir="rtl"><h4 class="dc-h">العربية</h4><p class="story-b">${esc(b.body_ar)}</p></div>
+          </div>
+          ${secs}
+          ${cites}
+          <div class="callout" style="margin-top:16px;border-color:var(--green-line);background:var(--green-bg)">${ic('shield', 12, 'tone-green')} &nbsp;English and Arabic are produced together by the Briefing Agent — a briefing whose Arabic pass fails is never published as English-only.</div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div></div>`);
+    } catch (e) {
+      openModal(`<div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h3>Briefing</h3><button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div><div class="modal-body" style="color:var(--red)">Could not load the briefing: ${esc(e.message)}</div><div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div></div>`);
+    }
+  };
+
+  window.danahGenerateBriefing = async function () {
+    if (!isExecutive()) { if (typeof toast === 'function') toast('Only an executive can generate a briefing.'); return; }
+    briefState.msg = 'Generating a briefing from the current insights — this calls the model and can take a minute…';
+    if (typeof render === 'function') render();
+    try {
+      const b = await call('/briefings/generate', { method: 'POST', body: { force: false }, timeout: 180000 });
+      briefState.msg = `Draft briefing “${b.title}” created — it is now in the Approvals queue for publishing.`;
+      await refreshBriefings();
+      if (typeof render === 'function') render();
+    } catch (e) {
+      briefState.msg = e.status === 403 ? 'Only an executive can generate a briefing.' : 'Generation failed: ' + e.message;
+      if (typeof render === 'function') render();
+    }
+  };
+
+  function realReportsPage() {
+    const rows = briefState.items.length
+      ? briefState.items.map((b) => `
+        <div class="card card-pad hover" style="margin-bottom:12px;cursor:pointer" onclick="danahOpenBriefing('${b.id}')">
+          <div style="display:flex;gap:14px;align-items:center">
+            <div class="lic bg-blue tone-blue" style="width:44px;height:44px;flex:none">${ic('doc', 21)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:600">${esc(b.title)}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+                <span class="tag">${esc(b.date)}</span>
+                <span class="cls-tag">${esc((b.classification || '').replace('_', '-'))}</span>
+                <span class="pill bg-${b.status === 'published' ? 'green' : 'orange'} tone-${b.status === 'published' ? 'green' : 'orange'}">${esc(b.status)}</span>
+                ${b.confidence != null ? `<span class="tag">${Math.round(b.confidence * 100)}% confidence</span>` : ''}
+              </div>
+            </div>
+            <span class="link">Open EN / AR ${ic('arrow', 14)}</span>
+          </div>
+        </div>`).join('')
+      : `<div class="empty">${ic('doc', 42)}<h4>No briefings yet</h4><p>${isExecutive() ? 'Generate one from the current insights, or run the pipeline first.' : 'Briefings appear here once an executive generates and publishes them.'}</p></div>`;
+
+    const msg = briefState.msg ? `<div class="callout ${/fail|only/i.test(briefState.msg) ? '' : 'amber'}" style="margin-bottom:14px">${esc(briefState.msg)}</div>` : '';
+
+    return `
+      <div class="page-head">
+        <div class="page-title"><h1>Reports &amp; Briefings</h1><p>Executive briefings composed by the Briefing Agent — always bilingual (English and Arabic). Open one to read both side by side.</p></div>
+        <div class="page-controls">
+          <button class="btn btn-ghost" onclick="danahRefreshBriefings()">Refresh</button>
+          ${isExecutive() ? `<button class="btn btn-primary" onclick="danahGenerateBriefing()">${ic('spark', 16)} Generate briefing</button>` : ''}
+        </div>
+      </div>
+      ${msg}
+      ${briefState.loading ? '<div class="callout amber">Loading briefings…</div>' : `<div class="section">${rows}</div>`}`;
+  }
+
+  /* ======================= STRATEGIC MEMORY ======================= */
+  const memState = { items: [], loading: false };
+
+  async function refreshMemory() {
+    if (!state.live || !isAnalyst()) return;
+    memState.loading = true;
+    if (S && S.route === 'memory' && typeof render === 'function') render();
+    try { const rows = await call('/memory?limit=100').catch(() => null); memState.items = Array.isArray(rows) ? rows : []; } catch (_) { /* keep */ }
+    memState.loading = false;
+    if (S && S.route === 'memory' && typeof render === 'function') render();
+  }
+  window.danahRefreshMemory = refreshMemory;
+
+  function realMemoryPage() {
+    if (!isAnalyst()) {
+      return `<div class="page-head"><div class="page-title"><h1>Strategic Memory</h1></div></div>
+        <div class="callout section" style="border-color:var(--line);background:var(--surface-2)">${ic('lock', 13)} &nbsp;Institutional memory is available to <b>analyst</b> clearance and above. Your role (<b>${esc(backendRole() || 'viewer')}</b>) does not have access to it.</div>`;
+    }
+    const rows = memState.items.length
+      ? memState.items.map((e) => `
+        <div class="lrow" style="cursor:default">
+          <div class="lic bg-blue tone-blue">${ic('memory', 18)}</div>
+          <div class="lbody">
+            <div class="ltitle">${esc(e.title)}</div>
+            <div class="lmeta">
+              <span class="tag">${esc(e.kind)}</span>
+              <span class="cls-tag">${esc((e.classification || '').replace('_', '-'))}</span>
+              ${(e.tags || []).slice(0, 4).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}
+              <span class="tag">${esc(relativeTime(e.created_at))}</span>
+            </div>
+            <div class="ldesc">${esc(e.content)}</div>
+          </div>
+        </div>`).join('')
+      : `<div class="empty">${ic('memory', 42)}<h4>No memory entries yet</h4><p>The Memory Agent records decisions and lessons here after pipeline runs.</p></div>`;
+    return `
+      <div class="page-head"><div class="page-title"><h1>Strategic Memory</h1><p>Decisions, lessons and standing context the agents recall so the ministry never re-proposes what it already tried. Clearance-filtered in SQL.</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshMemory()">Refresh</button></div></div>
+      <div class="card section">${memState.loading ? '<div class="callout amber" style="margin:14px">Loading…</div>' : rows}</div>`;
+  }
+
+  /* ======================= INTELLIGENCE FEED (items) ======================= */
+  const feedState = { items: [], total: 0, loading: false };
+
+  async function refreshFeed() {
+    if (!state.live) return;
+    feedState.loading = true;
+    if (S && S.route === 'feed' && typeof render === 'function') render();
+    try { const p = await call('/items?limit=60').catch(() => null); feedState.items = (p && p.items) || []; feedState.total = (p && p.total) || 0; } catch (_) { /* keep */ }
+    feedState.loading = false;
+    if (S && S.route === 'feed' && typeof render === 'function') render();
+  }
+  window.danahRefreshFeed = refreshFeed;
+
+  function urgPill(u) {
+    if (!u) return '';
+    const map = { critical: 'red', high: 'orange', medium: 'blue', low: 'green' };
+    return `<span class="pill bg-${map[u] || 'navy'} tone-${map[u] || 'navy'}">${esc(u)}</span>`;
+  }
+
+  function realFeedPage() {
+    const rows = feedState.items.length
+      ? feedState.items.map((it) => `
+        <div class="lrow" style="cursor:${it.url ? 'pointer' : 'default'}" ${it.url ? `onclick="window.open('${esc(it.url)}','_blank','noopener')"` : ''}>
+          <div class="lic" style="background:var(--navy);color:#fff">${ic('activity', 18)}</div>
+          <div class="lbody">
+            <div class="ltitle">${esc(it.title)}</div>
+            <div class="lmeta">
+              <span class="tag">${ic('shield', 11)} ${esc(it.source_name)}</span>
+              ${it.category ? `<span class="tag">${esc(it.category)}</span>` : ''}
+              ${urgPill(it.urgency)}
+              ${it.relevance != null ? `<span class="tag">${Math.round(it.relevance * 100)}% relevant</span>` : ''}
+              <span class="cls-tag">${esc((it.classification || '').replace('_', '-'))}</span>
+              <span class="tag">${esc(relativeTime(it.published_at || it.created_at))}</span>
+            </div>
+            ${it.summary ? `<div class="ldesc">${esc(it.summary)}</div>` : ''}
+          </div>
+        </div>`).join('')
+      : `<div class="empty">${ic('activity', 42)}<h4>No items yet</h4><p>Ingested source items appear here after a source sync or a pipeline run, each triaged by the Signal Agent.</p></div>`;
+    return `
+      <div class="page-head"><div class="page-title"><h1>Intelligence Feed</h1><p>Raw items ingested from the ministry's sources, triaged by the Signal Agent. Clearance-filtered in SQL — you only see what your role may read.</p></div>
+        <div class="page-controls"><span class="pill" style="background:var(--navy);color:#fff">${feedState.total} items</span><button class="btn btn-ghost" onclick="danahRefreshFeed()">Refresh</button></div></div>
+      <div class="card section">${feedState.loading ? '<div class="callout amber" style="margin:14px">Loading…</div>' : rows}</div>`;
+  }
+
+  /* ---- register the pages: real when live, prototype (or home) when offline ---- */
+  if (typeof PAGES !== 'undefined') {
+    PAGES.approvals = function () { return state.live ? realApprovalsPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+    PAGES.feed = function () { return state.live ? realFeedPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+    const _protoMemory = PAGES.memory;
+    PAGES.memory = function () { return state.live ? realMemoryPage() : (typeof _protoMemory === 'function' ? _protoMemory() : ''); };
+    const _protoReports = PAGES.reports;
+    PAGES.reports = function () { return state.live ? realReportsPage() : (typeof _protoReports === 'function' ? _protoReports() : ''); };
+  }
+
+  /* ---- one dispatcher so login and navigation populate live pages the same way ---- */
+  function refreshForRoute(route) {
+    if (!state.live) return;
+    if (route === 'alerts') refreshAlerts();
+    else if (route === 'knowledge') refreshDocuments();
+    else if (route === 'approvals') refreshApprovals();
+    else if (route === 'reports') refreshBriefings();
+    else if (route === 'memory') refreshMemory();
+    else if (route === 'feed') refreshFeed();
+  }
+
   // Refresh the live data when the user actually navigates to these pages, not only at login.
   const _protoGo = window.go;
   if (typeof _protoGo === 'function') {
     window.go = function (route) {
       const out = _protoGo.apply(this, arguments);
-      if (state.live) {
-        if (route === 'alerts') refreshAlerts();
-        if (route === 'knowledge') refreshDocuments();
-      }
+      refreshForRoute(route);
       return out;
     };
   }
