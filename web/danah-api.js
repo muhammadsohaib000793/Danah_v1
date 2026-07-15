@@ -300,6 +300,7 @@
     if (typeof render === 'function') render();
     // If they land (or reload) directly on a live-data page, populate it now — not only on nav.
     refreshForRoute((typeof S !== 'undefined' && S.route) || 'home');
+    if (typeof window.danahMaybeTour === 'function') window.danahMaybeTour();  // guided tour on first login
     if (typeof toast === 'function') toast(`Signed in as ${me.role} — connected to the live backend`);
   }
 
@@ -1498,6 +1499,297 @@
       return out;
     };
   }
+
+  /* =====================================================================
+     EXTENDED BACKEND COVERAGE — part 2
+       · User Management  GET/POST/PATCH /api/admin/users   (admin)
+       · Sources          GET /api/sources · POST /{id}/sync · PATCH /{id}  (view any; sync analyst+; toggle admin)
+       · Conversations    GET /api/agent/chat/sessions · /{id}   (own history)
+       · First-login guided tour of every page the role can see
+     ===================================================================== */
+  function isAdmin() { return backendRole() === 'admin'; }
+
+  if (typeof NAV !== 'undefined' && Array.isArray(NAV)) {
+    const addBefore2 = (beforeId, entry) => {
+      if (NAV.some((n) => n.id === entry.id)) return;
+      const i = NAV.findIndex((n) => n.id === beforeId);
+      if (i >= 0) NAV.splice(i, 0, entry); else NAV.push(entry);
+    };
+    addBefore2('agents', { id: 'chats', label: 'Conversations', icon: 'spark' });
+    addBefore2('reports', { id: 'sources', label: 'Sources', icon: 'link' });
+    addBefore2('governance', { id: 'users', label: 'User Management', icon: 'user' });
+  }
+
+  const _navLockedPrev = window.navLocked;
+  window.navLocked = function (route) {
+    if (route === 'users') return !state.live || !isAdmin();
+    if (route === 'sources' || route === 'chats') return !state.live;
+    return typeof _navLockedPrev === 'function' ? _navLockedPrev(route) : false;
+  };
+
+  const _goPrev2 = window.go;
+  if (typeof _goPrev2 === 'function') {
+    window.go = function (route) {
+      const out = _goPrev2.apply(this, arguments);
+      if (state.live) {
+        if (route === 'users') refreshUsers();
+        else if (route === 'sources') refreshSources();
+        else if (route === 'chats') refreshChats();
+      }
+      return out;
+    };
+  }
+
+  /* ======================= USER MANAGEMENT (admin) ======================= */
+  const usersState = { items: [], loaded: false, loading: false, msg: '' };
+  async function refreshUsers() {
+    if (!state.live || !isAdmin()) return;
+    usersState.loading = true;
+    if (S && S.route === 'users' && typeof render === 'function') render();
+    try { const rows = await call('/admin/users?limit=200').catch(() => null); usersState.items = Array.isArray(rows) ? rows : []; } catch (_) { /* keep */ }
+    usersState.loading = false; usersState.loaded = true;
+    if (S && S.route === 'users' && typeof render === 'function') render();
+  }
+  window.danahRefreshUsers = refreshUsers;
+
+  async function danahUserPatch(id, patch) {
+    usersState.msg = 'Updating…'; if (typeof render === 'function') render();
+    try { await call('/admin/users/' + id, { method: 'PATCH', body: patch }); usersState.msg = 'User updated — recorded in the audit log.'; await refreshUsers(); }
+    catch (e) { usersState.msg = e.status === 403 ? (e.message || 'Not permitted.') : 'Update failed: ' + e.message; if (typeof render === 'function') render(); }
+  }
+  window.danahSetUserRole = function (id, role) { danahUserPatch(id, { role }); };
+  window.danahToggleUser = function (id, active) { danahUserPatch(id, { is_active: active }); };
+
+  window.danahNewUser = function () {
+    if (typeof openModal !== 'function') return;
+    openModal(`<div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="mh-ic bg-blue tone-blue">${ic('user', 21)}</div><div><h3>Create user</h3><p>Clearance follows the role and is enforced server-side.</p></div><button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Full name</label><input id="nuName" class="inp" placeholder="Jane Analyst"></div>
+        <div class="field"><label>Email</label><input id="nuEmail" class="inp" type="email" placeholder="jane@ministry.gov"></div>
+        <div class="field"><label>Temporary password</label><input id="nuPass" class="inp" type="password" placeholder="At least 12 characters"></div>
+        <div class="field"><label>Role</label><div class="select" style="width:100%"><select id="nuRole">
+          <option value="viewer">viewer · INTERNAL</option><option value="analyst">analyst · OFFICIAL</option><option value="executive">executive · OFFICIAL-SENSITIVE</option><option value="admin">admin · OFFICIAL-SENSITIVE</option></select></div></div>
+        <div id="nuErr" style="display:none;color:var(--red);font-size:12.5px;margin-top:4px"></div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="danahCreateUser()">Create user</button></div></div>`);
+  };
+  window.danahCreateUser = async function () {
+    const name = (document.getElementById('nuName') || {}).value || '';
+    const email = (document.getElementById('nuEmail') || {}).value || '';
+    const password = (document.getElementById('nuPass') || {}).value || '';
+    const role = (document.getElementById('nuRole') || {}).value || 'viewer';
+    const errEl = document.getElementById('nuErr');
+    try {
+      await call('/admin/users', { method: 'POST', body: { full_name: name.trim(), email: email.trim(), password, role } });
+      if (typeof closeModal === 'function') closeModal();
+      usersState.msg = `Created ${email.trim()} (${role}) — recorded in the audit log.`;
+      await refreshUsers();
+    } catch (e) {
+      if (errEl) { errEl.textContent = e.status === 409 ? 'An account with that email already exists.' : (e.message || 'Create failed.'); errEl.style.display = 'block'; }
+    }
+  };
+
+  function realUsersPage() {
+    if (!isAdmin()) {
+      return `<div class="page-head"><div class="page-title"><h1>User Management</h1></div></div>
+        <div class="callout section" style="border-color:var(--line);background:var(--surface-2)">${ic('lock', 13)} &nbsp;User administration is <b>admin</b> only. Your role (<b>${esc(backendRole() || '')}</b>) cannot manage accounts.</div>`;
+    }
+    if (!usersState.loaded && !usersState.loading) setTimeout(refreshUsers, 0);
+    const meId = (state.user && state.user.id) || '';
+    const rows = usersState.items.map((u) => `
+      <tr>
+        <td><div style="font-weight:600;font-size:13px">${esc(u.full_name || '')}</div><div class="muted" style="font-size:11.5px">${esc(u.email)}</div></td>
+        <td><div class="select" style="min-width:118px"><select onchange="danahSetUserRole('${u.id}', this.value)" ${u.id === meId ? 'disabled title="You cannot change your own role"' : ''}>
+          ${['viewer', 'analyst', 'executive', 'admin'].map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div></td>
+        <td><span class="cls-tag">${esc((u.clearance || '').replace('_', '-'))}</span></td>
+        <td>${u.is_active ? '<span class="pill bg-green tone-green">Active</span>' : '<span class="pill bg-red tone-red">Disabled</span>'}</td>
+        <td style="font-size:12px;color:var(--ink-3)">${u.last_login_at ? esc(relativeTime(u.last_login_at)) : 'never'}</td>
+        <td>${u.id === meId ? '<span class="muted" style="font-size:11px">you</span>' : (u.is_active
+        ? `<button class="btn btn-ghost btn-sm" onclick="danahToggleUser('${u.id}',false)">Deactivate</button>`
+        : `<button class="btn btn-ghost btn-sm" onclick="danahToggleUser('${u.id}',true)">Activate</button>`)}</td>
+      </tr>`).join('');
+    const msg = usersState.msg ? `<div class="callout ${/fail|exist|not permitted/i.test(usersState.msg) ? '' : 'amber'}" style="margin-bottom:14px">${esc(usersState.msg)}</div>` : '';
+    return `
+      <div class="page-head"><div class="page-title"><h1>User Management</h1><p>Create accounts and set roles. Clearance follows the role; changing a password or disabling an account revokes its tokens at once. Every change is audited.</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshUsers()">Refresh</button><button class="btn btn-primary" onclick="danahNewUser()">${ic('user', 16)} Create user</button></div></div>
+      ${msg}
+      <div class="card section" style="overflow-x:auto"><table class="tbl"><thead><tr><th>User</th><th>Role</th><th>Clearance</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+        <tbody>${usersState.loading && !usersState.items.length ? '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Loading…</td></tr>' : (rows || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No users.</td></tr>')}</tbody></table></div>`;
+  }
+
+  /* ======================= SOURCES ======================= */
+  const srcState = { items: [], loaded: false, loading: false, msg: '' };
+  async function refreshSources() {
+    if (!state.live) return;
+    srcState.loading = true;
+    if (S && S.route === 'sources' && typeof render === 'function') render();
+    try { const rows = await call('/sources').catch(() => null); srcState.items = Array.isArray(rows) ? rows : []; } catch (_) { /* keep */ }
+    srcState.loading = false; srcState.loaded = true;
+    if (S && S.route === 'sources' && typeof render === 'function') render();
+  }
+  window.danahRefreshSources = refreshSources;
+  window.danahSyncSource = async function (id) {
+    srcState.msg = 'Syncing — running the connector now…'; if (typeof render === 'function') render();
+    try {
+      const r = await call('/sources/' + id + '/sync', { method: 'POST', timeout: 120000 });
+      srcState.msg = r.status === 'ok' ? `Synced — fetched ${r.fetched}, new ${r.created}, duplicates ${r.duplicates}.` : `Source reported “${r.status}”${r.error ? ' · ' + r.error : ''}.`;
+      await refreshSources();
+    } catch (e) { srcState.msg = e.status === 403 ? 'Syncing requires analyst clearance or above.' : 'Sync failed: ' + e.message; if (typeof render === 'function') render(); }
+  };
+  window.danahToggleSource = async function (id, enabled) {
+    if (!isAdmin()) { if (typeof toast === 'function') toast('Only an admin can enable or disable a source.'); return; }
+    try { await call('/sources/' + id, { method: 'PATCH', body: { enabled } }); srcState.msg = enabled ? 'Source enabled.' : 'Source disabled.'; await refreshSources(); }
+    catch (e) { srcState.msg = 'Update failed: ' + e.message; if (typeof render === 'function') render(); }
+  };
+  function srcHealthPill(h) {
+    const map = { healthy: ['green', 'Healthy'], stale: ['orange', 'Stale'], failing: ['red', 'Failing'], disabled: ['navy', 'Disabled'], unknown: ['blue', 'Unknown'] };
+    const x = map[h] || ['blue', h || 'unknown'];
+    return `<span class="pill bg-${x[0] === 'navy' ? 'blue' : x[0]} tone-${x[0] === 'navy' ? 'blue' : x[0]}"><span class="sdot" style="background:var(--${x[0] === 'navy' ? 'ink-3' : x[0]})"></span>${x[1]}</span>`;
+  }
+  function realSourcesPage() {
+    if (!srcState.loaded && !srcState.loading) setTimeout(refreshSources, 0);
+    const analyst = isAnalyst(), admin = isAdmin();
+    const rows = srcState.items.map((s) => `
+      <tr>
+        <td><div style="font-weight:600;font-size:13px">${esc(s.name)}</div><div class="muted" style="font-size:11.5px">${esc(s.connector)} · ${esc(s.type)}</div></td>
+        <td>${srcHealthPill(s.health)}</td>
+        <td style="font-size:12px">${s.item_count} items</td>
+        <td style="font-size:12px;color:var(--ink-3)">${s.last_synced_at ? esc(relativeTime(s.last_synced_at)) : 'never'}${s.last_status ? ' · ' + esc(s.last_status) : ''}</td>
+        <td>${s.enabled ? '<span class="pill bg-green tone-green">Enabled</span>' : '<span class="pill" style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--line)">Disabled</span>'}</td>
+        <td style="white-space:nowrap">
+          ${analyst ? `<button class="btn btn-ghost btn-sm" onclick="danahSyncSource('${s.id}')">${ic('refresh', 13)} Sync</button>` : ''}
+          ${admin ? `<button class="btn btn-ghost btn-sm" onclick="danahToggleSource('${s.id}',${s.enabled ? 'false' : 'true'})">${s.enabled ? 'Disable' : 'Enable'}</button>` : ''}
+        </td>
+      </tr>`).join('');
+    const msg = srcState.msg ? `<div class="callout ${/fail|require/i.test(srcState.msg) ? '' : 'amber'}" style="margin-bottom:14px">${esc(srcState.msg)}</div>` : '';
+    return `
+      <div class="page-head"><div class="page-title"><h1>Sources</h1><p>The connectors DANAH ingests from, with live health computed from real poll history. ${analyst ? 'Sync one on demand — ' : ''}item counts are within your clearance.</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshSources()">Refresh</button></div></div>
+      ${msg}
+      <div class="card section" style="overflow-x:auto"><table class="tbl"><thead><tr><th>Source</th><th>Health</th><th>Items</th><th>Last sync</th><th>Scheduler</th><th></th></tr></thead>
+        <tbody>${srcState.loading && !srcState.items.length ? '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Loading…</td></tr>' : (rows || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No sources configured.</td></tr>')}</tbody></table></div>
+      <div class="callout" style="border-color:var(--green-line);background:var(--green-bg)">${ic('shield', 13, 'tone-green')} &nbsp;Health is real: a source goes <b>stale</b> after three missed polls and <b>failing</b> after a sync error — the same function the scheduler uses.</div>`;
+  }
+
+  /* ======================= CONVERSATIONS (chat history) ======================= */
+  const chatsState = { items: [], loaded: false, loading: false };
+  async function refreshChats() {
+    if (!state.live) return;
+    chatsState.loading = true;
+    if (S && S.route === 'chats' && typeof render === 'function') render();
+    try { const rows = await call('/agent/chat/sessions').catch(() => null); chatsState.items = Array.isArray(rows) ? rows : []; } catch (_) { /* keep */ }
+    chatsState.loading = false; chatsState.loaded = true;
+    if (S && S.route === 'chats' && typeof render === 'function') render();
+  }
+  window.danahRefreshChats = refreshChats;
+  window.danahOpenChat = async function (id) {
+    if (typeof openModal !== 'function') return;
+    openModal(`<div class="modal wide" onclick="event.stopPropagation()"><div class="modal-body" style="padding:44px;text-align:center;color:var(--ink-3)">Loading conversation…</div></div>`);
+    try {
+      const s = await call('/agent/chat/sessions/' + id);
+      const msgs = (s.messages || []).map((m) => {
+        const cites = (m.citations || []).length ? `<div class="muted" style="font-size:11px;margin-top:6px">${m.citations.map((c) => `[${c.n}] ${esc(c.title || '')}`).join(' · ')}</div>` : '';
+        return `<div style="margin-bottom:14px">
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${m.role === 'user' ? 'var(--navy)' : 'var(--orange)'};margin-bottom:4px">${m.role === 'user' ? 'You' : 'DANAH'}${(m.confidence != null && m.role !== 'user') ? ' · ' + Math.round(m.confidence * 100) + '% confidence' : ''}</div>
+          <div class="story-b" style="white-space:pre-wrap">${esc(m.content)}</div>${cites}</div>`;
+      }).join('');
+      openModal(`<div class="modal wide" onclick="event.stopPropagation()">
+        <div class="modal-head"><div class="mh-ic bg-orange tone-orange">${ic('spark', 21)}</div><div><h3>${esc(s.title || 'Conversation')}</h3><p>${s.message_count} messages · ${esc(relativeTime(s.created_at))}</p></div><button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div>
+        <div class="modal-body">${msgs || '<div class="muted">No messages.</div>'}</div>
+        <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div></div>`);
+    } catch (e) {
+      openModal(`<div class="modal" onclick="event.stopPropagation()"><div class="modal-head"><h3>Conversation</h3><button class="modal-x" onclick="closeModal()">${ic('x', 18)}</button></div><div class="modal-body" style="color:var(--red)">Could not load: ${esc(e.message)}</div><div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div></div>`);
+    }
+  };
+  function realChatsPage() {
+    if (!chatsState.loaded && !chatsState.loading) setTimeout(refreshChats, 0);
+    const rows = chatsState.items.length
+      ? chatsState.items.map((s) => `
+        <div class="lrow" style="cursor:pointer" onclick="danahOpenChat('${s.id}')">
+          <div class="lic bg-orange tone-orange">${ic('spark', 18)}</div>
+          <div class="lbody"><div class="ltitle">${esc(s.title || 'Untitled conversation')}</div>
+            <div class="lmeta"><span class="tag">${s.message_count} messages</span><span class="tag">${esc(relativeTime(s.created_at))}</span></div></div>
+          <div style="align-self:center;color:var(--ink-4)">${ic('chevron', 18)}</div>
+        </div>`).join('')
+      : `<div class="empty">${ic('spark', 42)}<h4>No conversations yet</h4><p>Ask the Live Agent something — your conversations are saved here so you can re-read the answers and their citations.</p></div>`;
+    return `
+      <div class="page-head"><div class="page-title"><h1>Conversations</h1><p>Your saved chats with the Live Agent — grounded answers with their citations, kept for reference.</p></div>
+        <div class="page-controls"><button class="btn btn-ghost" onclick="danahRefreshChats()">Refresh</button></div></div>
+      <div class="card section">${chatsState.loading && !chatsState.items.length ? '<div class="callout amber" style="margin:14px">Loading…</div>' : rows}</div>`;
+  }
+
+  if (typeof PAGES !== 'undefined') {
+    PAGES.users = function () { return state.live ? realUsersPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+    PAGES.sources = function () { return state.live ? realSourcesPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+    PAGES.chats = function () { return state.live ? realChatsPage() : (typeof pageHome === 'function' ? pageHome() : ''); };
+  }
+
+  /* ======================= FIRST-LOGIN GUIDED TOUR ======================= */
+  const TOUR_GUIDE = {
+    home: ['Command Centre', 'Your live overview — real figures pulled from the backend, the Ask bar, and the decisions awaiting you.'],
+    risks: ['Risks & Blind Spots', 'Real insights the AI produced, filtered to risks. Policy Watch and UAE Success Stories are the same list, by type.'],
+    feed: ['Intelligence Feed', 'Raw items ingested from the ministry’s sources, each triaged by the Signal Agent — clearance-filtered.'],
+    chats: ['Conversations', 'Your chat history with the Live Agent. Open any one to re-read the grounded answer and its citations.'],
+    agents: ['AI Agents', 'Run the real six-agent pipeline and watch it reason step by step, with real tokens and cost.'],
+    knowledge: ['Verified Knowledge', 'Upload documents. Once indexed, the Live Agent can cite them in its answers.'],
+    sources: ['Sources', 'The connectors DANAH ingests from, with live health. Sync one on demand.'],
+    reports: ['Reports & Briefings', 'Executive briefings composed by the Briefing Agent — always bilingual, English and Arabic.'],
+    approvals: ['Approvals', 'Nothing DANAH produces is published until you decide here. Every decision is written to the audit log.'],
+    memory: ['Strategic Memory', 'What the agents remember, so the ministry never re-proposes what it already tried.'],
+    users: ['User Management', 'Create accounts and set roles — clearance follows the role and is enforced server-side.'],
+    governance: ['Governance & Audit', 'The tamper-evident, hash-chained log of every action in the system.'],
+    alerts: ['Alerts', 'Real notifications, addressed to your role.'],
+    settings: ['Settings', 'Appearance, language, and your session.'],
+  };
+  const TOUR = { steps: [], i: 0 };
+  function danahTourEnd() {
+    try { localStorage.setItem('danah.tour.seen', '1'); } catch (_) {}
+    const o = document.getElementById('danah-tour'); if (o) o.remove();
+    document.querySelectorAll('.nav-item').forEach((n) => { n.style.boxShadow = ''; });
+  }
+  window.danahTourEnd = danahTourEnd;
+  function danahTourShow() {
+    const step = TOUR.steps[TOUR.i];
+    if (!step) { danahTourEnd(); return; }
+    if (typeof go === 'function') go(step);
+    const g = TOUR_GUIDE[step] || [step, ''];
+    let o = document.getElementById('danah-tour');
+    if (!o) { o = document.createElement('div'); o.id = 'danah-tour'; o.className = 'no-print'; document.body.appendChild(o); }
+    o.style.cssText = 'position:fixed;z-index:100000;left:50%;bottom:26px;transform:translateX(-50%);width:min(520px,92vw);background:#0f1d30;color:#e8eefc;border:1px solid #24406b;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:16px 18px';
+    o.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:10px;font-weight:700;letter-spacing:.08em;color:#5ee9a8;text-transform:uppercase">Guided tour · ${TOUR.i + 1}/${TOUR.steps.length}</span>
+        <button onclick="danahTourEnd()" style="margin-left:auto;background:none;border:none;color:#8fa0c4;cursor:pointer;font-size:12px">Skip tour</button>
+      </div>
+      <div style="font-family:var(--display,inherit);font-size:16px;font-weight:700;margin-bottom:5px">${esc(g[0])}</div>
+      <div style="font-size:13px;line-height:1.55;color:#b9c6e0">${esc(g[1])}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        ${TOUR.i > 0 ? `<button class="btn btn-ghost btn-sm" onclick="danahTourNav(-1)">Back</button>` : ''}
+        <button class="btn btn-primary btn-sm" onclick="danahTourNav(1)">${TOUR.i === TOUR.steps.length - 1 ? 'Done' : 'Next'}</button>
+      </div>`;
+    document.querySelectorAll('.nav-item').forEach((n) => { n.style.boxShadow = ''; });
+    setTimeout(() => { const a = document.querySelector('.nav-item.active'); if (a) a.style.boxShadow = '0 0 0 2px #5b8cff, 0 0 0 6px rgba(91,140,255,.25)'; }, 60);
+  }
+  window.danahTourNav = function (d) {
+    TOUR.i += d;
+    if (TOUR.i >= TOUR.steps.length) { danahTourEnd(); return; }
+    if (TOUR.i < 0) TOUR.i = 0;
+    danahTourShow();
+  };
+  function danahMaybeTour() {
+    if (!state.live) return;
+    let seen = false; try { seen = localStorage.getItem('danah.tour.seen') === '1'; } catch (_) {}
+    if (seen) return;
+    const order = ['home', 'risks', 'feed', 'chats', 'agents', 'knowledge', 'sources', 'reports', 'approvals', 'memory', 'users', 'governance', 'alerts', 'settings'];
+    TOUR.steps = order.filter((r) => TOUR_GUIDE[r] && (typeof window.navLocked !== 'function' || !window.navLocked(r)));
+    TOUR.i = 0;
+    setTimeout(danahTourShow, 500);
+  }
+  window.danahMaybeTour = danahMaybeTour;
+  window.danahReplayTour = function () { try { localStorage.removeItem('danah.tour.seen'); } catch (_) {} danahMaybeTour(); };
+  const _protoReplayTour = window.replayTour;
+  window.replayTour = function () { if (state.live) return window.danahReplayTour(); return typeof _protoReplayTour === 'function' ? _protoReplayTour() : undefined; };
 
   /* The hero panel — the first thing anyone sees — shipped with invented numbers:
      "48 sources checked · 23 items updated · 91% confidence". They were honest in a
