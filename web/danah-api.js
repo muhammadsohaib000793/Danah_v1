@@ -178,7 +178,9 @@
     document.querySelectorAll('.danah-persona').forEach((c) => { c.style.borderColor = '#243049'; });
     const card = document.querySelector('.danah-persona[data-email="' + email + '"]');
     if (card) card.style.borderColor = '#5b8cff';
-    const p = document.getElementById('loginPass'); if (p) p.focus();
+    // Fill the email only — the password is always typed by hand. Clear anything the browser
+    // may have auto-filled, then focus the field so it can be entered manually.
+    const p = document.getElementById('loginPass'); if (p) { p.value = ''; p.focus(); }
   };
 
   window.renderLogin = function renderLogin() {
@@ -198,19 +200,19 @@
       </button>`).join('');
     r.innerHTML = `
       <div class="login-scrim" role="dialog" aria-modal="true" aria-label="Official Sign-In">
-        <div class="login-card" style="max-width:620px">
+        <div class="login-card" style="max-width:min(640px,94vw);max-height:92vh;overflow-y:auto">
           <div class="login-top">
             <div class="login-emblem">${emblem}</div>
             <div><h1>UNITED ARAB EMIRATES</h1><h2>MINISTRY OF CABINET AFFAIRS</h2></div>
           </div>
-          <div class="login-sub">DANAH — Agentic AI Command Centre. Choose an official account, or sign in directly.</div>
+          <div class="login-sub">DANAH — Agentic AI Command Centre. Pick an account to fill its email, then type the password.</div>
           <div style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#7f8db0;margin:4px 2px 9px;text-transform:uppercase">Official accounts · role &amp; clearance shown</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px">${cards}</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(188px,1fr));gap:9px;margin-bottom:16px">${cards}</div>
           <div class="login-field"><label>Email</label>
             <input id="loginEmail" type="email" autocomplete="username" value="admin@ministry.gov"
               style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;background:#0e1526;color:#e8eefc;font-size:14px" /></div>
-          <div class="login-field"><label>Password</label>
-            <input id="loginPass" type="password" autocomplete="current-password"
+          <div class="login-field"><label>Password <span style="font-weight:400;color:#7f8db0;text-transform:none;letter-spacing:0">· type it manually</span></label>
+            <input id="loginPass" type="password" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
               style="width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3550;background:#0e1526;color:#e8eefc;font-size:14px" /></div>
           <div id="loginErr" style="display:none;color:#ff8095;font-size:12.5px;margin:8px 2px 0"></div>
           <button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:14px">Sign in</button>
@@ -2044,6 +2046,125 @@
       console.warn('[DANAH] could not fully silence the simulations', e);
     }
   }
+
+  /* =====================================================================
+     UI POLISH
+       · Sidebar grouped into collapsible sections — fewer things on screen at
+         once (click a header to expand/collapse), and the scroll position is
+         preserved across navigation so the clicked item no longer jumps to top.
+       · Guided tour re-runs on every login, anchored beside the highlighted
+         menu item (not a floating card), covering every page the role can see.
+       · Responsive + hover CSS: clickable rows clamp long text and reveal it on
+         hover; the login card and grids reflow on small screens.
+     ===================================================================== */
+  (function injectPolishCSS() {
+    if (document.getElementById('danah-polish-css')) return;
+    const s = document.createElement('style');
+    s.id = 'danah-polish-css';
+    s.textContent =
+      '#sidebar .nav-group-head{display:flex;align-items:center;gap:8px;padding:8px 12px;margin:8px 2px 2px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-4);cursor:pointer;user-select:none;border-radius:8px;transition:background .12s,color .12s}' +
+      '#sidebar .nav-group-head:hover{background:var(--surface-2);color:var(--ink-2)}' +
+      '#sidebar .nav-group-head .chev{margin-left:auto;color:var(--ink-4);transition:transform .18s}' +
+      '#sidebar .nav-group.collapsed .chev{transform:rotate(-90deg)}' +
+      '#sidebar .nav-group.collapsed .nav-group-body{display:none}' +
+      '.lrow[onclick]{cursor:pointer}' +
+      '.lrow .ldesc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}' +
+      '.lrow:hover .ldesc{-webkit-line-clamp:unset}' +
+      '#danah-tour{transition:top .16s ease,left .16s ease}' +
+      '@media(max-width:600px){.login-card{padding:22px 18px!important}.page-controls{flex-wrap:wrap}}';
+    document.head.appendChild(s);
+  })();
+
+  /* ---- collapsible, scroll-preserving sidebar (live only) ---- */
+  let navCollapsed = {};
+  try { navCollapsed = JSON.parse(localStorage.getItem('danah.nav.collapsed') || '{}') || {}; } catch (_) { navCollapsed = {}; }
+  const NAV_GROUPS = [
+    { label: null, ids: ['home'] },
+    { label: 'Intelligence', ids: ['risks', 'policy', 'success', 'feed', 'chats', 'agents', 'knowledge', 'sources', 'reports'] },
+    { label: 'Decisions', ids: ['tasks', 'approvals', 'memory'] },
+    { label: 'Administration', ids: ['users', 'governance'] },
+    { label: 'Account', ids: ['alerts', 'settings'] },
+  ];
+  function danahRenderSidebar() {
+    const sb = document.querySelector('#sidebar'); if (!sb) return;
+    const prev = sb.querySelector('.nav'); const st = prev ? prev.scrollTop : 0;
+    const unread = (typeof ALERTS !== 'undefined') ? ALERTS.filter((a) => !a.read).length : 0;
+    const defs = {}; NAV.forEach((n) => { if (!n.divider) defs[n.id] = n; });
+    const itemHtml = (id) => {
+      const it = defs[id]; if (!it) return '';
+      if (typeof navLocked === 'function' && navLocked(id)) return '';
+      const label = (typeof tt === 'function') ? tt('nav.' + id, it.label) : it.label;
+      const active = (typeof S !== 'undefined' && S.route === id);
+      return `<div class="nav-item ${active ? 'active' : ''}" onclick="go('${id}')" role="link" tabindex="0"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}" ${active ? 'aria-current="page"' : ''}>
+          ${ic(it.icon, 18)}<span>${label}</span>${id === 'alerts' && unread ? `<span class="badge">${unread}</span>` : ''}</div>`;
+    };
+    const groups = NAV_GROUPS.map((g) => {
+      const items = g.ids.map(itemHtml).filter(Boolean);
+      if (!items.length) return '';
+      if (!g.label) return items.join('');
+      const collapsed = navCollapsed[g.label] ? 'collapsed' : '';
+      return `<div class="nav-group ${collapsed}"><div class="nav-group-head" onclick="danahToggleNavGroup('${g.label}')">${g.label}<span class="chev">${ic('chevron', 14)}</span></div><div class="nav-group-body">${items.join('')}</div></div>`;
+    }).join('');
+    sb.innerHTML = `<nav class="nav" role="navigation" aria-label="Primary">${groups}</nav>
+      <div class="nav-foot"><div class="nav-item ${S.route === 'help' ? 'active' : ''}" onclick="go('help')" role="link" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('help')}">${ic('help', 18)}<span>${(typeof tt === 'function') ? tt('nav.help', 'Help & Support') : 'Help & Support'}</span></div></div>`;
+    const now = sb.querySelector('.nav'); if (now) now.scrollTop = st;
+  }
+  window.danahRenderSidebar = danahRenderSidebar;
+  window.danahToggleNavGroup = function (label) { navCollapsed[label] = !navCollapsed[label]; try { localStorage.setItem('danah.nav.collapsed', JSON.stringify(navCollapsed)); } catch (_) {} danahRenderSidebar(); };
+  window.danahExpandAllNav = function () { navCollapsed = {}; danahRenderSidebar(); };
+  const _renderSidebarOrig = window.renderSidebar;
+  window.renderSidebar = function () { return state.live ? danahRenderSidebar() : (typeof _renderSidebarOrig === 'function' ? _renderSidebarOrig.apply(this, arguments) : undefined); };
+
+  /* ---- guided tour: every login, anchored beside the highlighted item ---- */
+  const TState = { steps: [], i: 0 };
+  function tourEl() { let o = document.getElementById('danah-tour'); if (!o) { o = document.createElement('div'); o.id = 'danah-tour'; o.className = 'no-print'; document.body.appendChild(o); } return o; }
+  function tourPosition(o) {
+    const active = document.querySelector('#sidebar .nav-item.active');
+    const narrow = window.innerWidth < 920;
+    if (active && !narrow) {
+      try { active.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+      const r = active.getBoundingClientRect();
+      o.style.left = (r.right + 14) + 'px';
+      o.style.top = Math.max(12, Math.min(window.innerHeight - 250, r.top - 6)) + 'px';
+      o.style.bottom = 'auto'; o.style.transform = 'none';
+    } else {
+      o.style.left = '50%'; o.style.bottom = '20px'; o.style.top = 'auto'; o.style.transform = 'translateX(-50%)';
+    }
+  }
+  function tourShow() {
+    const step = TState.steps[TState.i]; if (!step) { tourEnd(); return; }
+    if (typeof go === 'function') go(step);
+    const g = (typeof TOUR_GUIDE !== 'undefined' && TOUR_GUIDE[step]) || [step, ''];
+    const o = tourEl();
+    o.style.cssText = 'position:fixed;z-index:100000;background:#0f1d30;color:#e8eefc;border:1px solid #24406b;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:15px 17px;width:min(360px,92vw)';
+    o.innerHTML =
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#5ee9a8;text-transform:uppercase">Tour · ${TState.i + 1}/${TState.steps.length}</span>
+        <button onclick="danahTourEnd()" style="margin-left:auto;background:none;border:none;color:#8fa0c4;cursor:pointer;font-size:12px">Skip</button>
+      </div>
+      <div style="font-family:var(--display,inherit);font-size:15px;font-weight:700;margin-bottom:4px">${esc(g[0])}</div>
+      <div style="font-size:12.5px;line-height:1.55;color:#b9c6e0">${esc(g[1])}</div>
+      <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:13px">
+        ${TState.i > 0 ? `<button class="btn btn-ghost btn-sm" onclick="danahTourNav(-1)">Back</button>` : ''}
+        <button class="btn btn-primary btn-sm" onclick="danahTourNav(1)">${TState.i === TState.steps.length - 1 ? 'Done' : 'Next'}</button>
+      </div>`;
+    document.querySelectorAll('.nav-item').forEach((n) => { n.style.boxShadow = ''; });
+    setTimeout(() => { const a = document.querySelector('#sidebar .nav-item.active'); if (a) a.style.boxShadow = '0 0 0 2px #5b8cff,0 0 0 6px rgba(91,140,255,.22)'; tourPosition(o); }, 90);
+  }
+  function tourEnd() { const o = document.getElementById('danah-tour'); if (o) o.remove(); document.querySelectorAll('.nav-item').forEach((n) => { n.style.boxShadow = ''; }); }
+  window.danahTourEnd = tourEnd;
+  window.danahTourNav = function (d) { TState.i += d; if (TState.i >= TState.steps.length) { tourEnd(); return; } if (TState.i < 0) TState.i = 0; tourShow(); };
+  window.danahMaybeTour = function () {
+    if (!state.live) return;
+    const order = ['home', 'risks', 'feed', 'chats', 'agents', 'knowledge', 'sources', 'reports', 'tasks', 'approvals', 'memory', 'users', 'governance', 'alerts', 'settings'];
+    TState.steps = order.filter((r) => (typeof TOUR_GUIDE !== 'undefined' && TOUR_GUIDE[r]) && (typeof window.navLocked !== 'function' || !window.navLocked(r)));
+    TState.i = 0;
+    if (typeof window.danahExpandAllNav === 'function') window.danahExpandAllNav();  // so every item is visible to point at
+    setTimeout(tourShow, 450);
+  };
+  window.danahReplayTour = function () { window.danahMaybeTour(); };
+  window.addEventListener('resize', () => { const o = document.getElementById('danah-tour'); if (o) tourPosition(o); });
 
   /* ---------- boot ----------------------------------------------------- */
   async function boot() {
