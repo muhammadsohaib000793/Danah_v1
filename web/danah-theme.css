@@ -161,3 +161,8 @@ body{background:var(--bg);font-size:14.5px}
   border-radius:12px;box-shadow:0 20px 54px rgba(20,20,20,.28);padding:16px 18px}
 /* click-blocking overlay while the tour runs (page not operable) */
 #danah-tour-ov{position:fixed;inset:0;z-index:99996;background:transparent;cursor:default}
+/* don't show a nav item's hover tooltip while its dropdown is open — it would cover the list */
+#danah-topnav .tn-item.open[data-tip-b]:hover::after,
+#danah-topnav .tn-item.open[data-tip-b]:hover::before,
+#danah-topnav .tn-item.open[data-tip]:hover::after,
+#danah-topnav .tn-item.open[data-tip]:hover::before{display:none!important;content:none!important}
